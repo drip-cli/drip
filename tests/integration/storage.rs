@@ -7,6 +7,11 @@
 use crate::common::Drip;
 use serde_json::Value;
 use std::fs;
+// `PermissionsExt` lives under `std::os::unix` and doesn't exist on
+// Windows. The two permission-mode assertions in
+// `cache_file_is_chmod_0600` (lines 93/95) are gated below; everything
+// else in this module is cross-platform.
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -89,14 +94,19 @@ fn large_file_creates_a_cache_blob() {
     assert_eq!(body, fs::read_to_string(&f).unwrap());
 
     // Permissions: 0600 on Unix (defense in depth — the file lives
-    // under a 0700 cache dir and the DB itself is 0600).
-    let mode = fs::metadata(&cached[0]).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600, "cache file must be chmod 0600, got {mode:o}");
-    let dir_mode = fs::metadata(cache_dir(&drip)).unwrap().permissions().mode() & 0o777;
-    assert_eq!(
-        dir_mode, 0o700,
-        "cache dir must be chmod 0700, got {dir_mode:o}"
-    );
+    // under a 0700 cache dir and the DB itself is 0600). Windows
+    // doesn't have a comparable mode-bit model and the harden_*
+    // helpers no-op there, so we skip the assertions on Windows.
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(&cached[0]).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "cache file must be chmod 0600, got {mode:o}");
+        let dir_mode = fs::metadata(cache_dir(&drip)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            dir_mode, 0o700,
+            "cache dir must be chmod 0700, got {dir_mode:o}"
+        );
+    }
 }
 
 #[test]
