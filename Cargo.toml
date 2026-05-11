@@ -5,7 +5,7 @@
 # when the natural binary name is already squatted on crates.io
 # (see e.g. `cargo-watch`, `mdbook-pdf`).
 name = "drip-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.74"
 description = "Delta Read Interception Proxy — sends only file diffs to your LLM agent"

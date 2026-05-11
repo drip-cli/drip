@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/drip-cli/drip/compare/v0.1.0...v0.1.1) (2026-05-11)
+
+
+### Bug Fixes
+
+* **tests:** cross-platform errno + chmod-mode guards ([#1](https://github.com/drip-cli/drip/issues/1)) ([defc9df](https://github.com/drip-cli/drip/commit/defc9dfed0a842f00b936975fac6f7c3e84cc23a))
+
+
+### Documentation
+
+* **readme:** collapse brew install into a single fully-qualified command ([#2](https://github.com/drip-cli/drip/issues/2)) ([f1e09c3](https://github.com/drip-cli/drip/commit/f1e09c35ed3363a2815a336b6ecd9fa9e0b4075e))
+
 ## [Unreleased]
 
 ### Removed
