@@ -31,8 +31,13 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
             cross: true
+          # macos-13 (Intel) runners are being phased out — queue
+          # times routinely exceed an hour. Use macos-latest (ARM)
+          # for both Darwin targets and cross-compile to x86_64 via
+          # the Rust toolchain (clang on macOS supports both arches
+          # natively; rustup adds the x86_64-apple-darwin target).
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
