@@ -1,0 +1,395 @@
+[DRIP: full read (semantic-compressed) | 38% reduction (4057/6528 tokens) | 6 functions elided, 278 lines hidden | ↔ unchanged since last session (0s ago) | ℹ session expired — fresh baseline started | run `drip refresh` for full content | /var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.MmVDQWFZxa/api_client.ts]
+import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
+import { randomUUID } from "node:crypto";
+
+/**
+ * Authentication strategies supported by the {@link ApiClient}.
+ * Bearer assumes a short-lived access token refreshable via {@link ApiClient.refreshToken}.
+ * [DRIP-javadoc-elided: original L8-L11, 3 lines | drip refresh for full]
+ */
+export enum AuthStrategy {
+  Bearer = "bearer",
+  ApiKey = "apikey",
+  OAuth2 = "oauth2",
+  None = "none",
+}
+
+/**
+ * Resolves the current credential material on demand.
+ * Implementations should cache aggressively — this is invoked on every
+ * [DRIP-javadoc-elided: original L22-L24, 2 lines | drip refresh for full]
+ */
+export type TokenProvider = () => Promise<string> | string;
+
+/**
+ * How a response body should be parsed before being handed back to the caller.
+ * `json` is the default. `text` is useful for plain-text endpoints (CSV, logs).
+ * [DRIP-javadoc-elided: original L30-L33, 3 lines | drip refresh for full]
+ */
+export type ParseMode = "json" | "text" | "arraybuffer" | "stream";
+
+/**
+ * Configuration for an {@link ApiClient} instance.
+ * The object is shallow-cloned on construction; mutating it after the client
+ * [DRIP-javadoc-elided: original L39-L42, 3 lines | drip refresh for full]
+ */
+export interface ApiConfig {
+  /** Fully-qualified base URL, e.g. `https://api.example.com/v1`. Trailing slash is stripped. */
+  baseUrl: string;
+  /** Per-request timeout in milliseconds. Defaults to 30_000. */
+  timeout: number;
+  /** Maximum retry attempts for idempotent verbs on 5xx / network failure. */
+  retries: number;
+  /** Base backoff in ms; the actual delay is `retryDelayMs * 2^attempt + jitter`. */
+  retryDelayMs: number;
+  /** Headers attached to every request. Keys are case-insensitive. */
+  headers: Record<string, string>;
+  /** Which auth flow to use. */
+  authStrategy: AuthStrategy;
+  /** Lazily resolves the auth credential. Required unless `authStrategy === None`. */
+  tokenProvider?: TokenProvider;
+}
+
+/**
+ * Per-request options.
+ * `T` is the expected shape of the request body for verbs that accept one;
+ * [DRIP-javadoc-elided: original L63-L65, 2 lines | drip refresh for full]
+ */
+export interface RequestOptions<T = unknown> {
+  /** HTTP verb. Defaults to `GET` when omitted. */
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  /** Request body. Serialized via `JSON.stringify` unless it is already a string or BufferSource. */
+  body?: T;
+  /** Query parameters appended to the URL. Arrays are repeated, `null`/`undefined` are dropped. */
+  query?: Record<string, string | number | boolean | null | undefined | Array<string | number>>;
+  /** Headers merged on top of the client-level defaults. */
+  headers?: Record<string, string>;
+  /** Optional AbortSignal to cancel the request mid-flight. */
+  signal?: AbortSignal;
+  /** How to decode the response body. Defaults to `json`. */
+  parseAs?: ParseMode;
+}
+
+/**
+ * The successful return shape of every public verb on {@link ApiClient}.
+ * `raw` is the underlying Response so callers can inspect things like
+ * [DRIP-javadoc-elided: original L84-L87, 3 lines | drip refresh for full]
+ */
+export interface ApiResponse<T> {
+  status: number;
+  headers: Record<string, string>;
+  data: T;
+  raw: Response;
+  requestId: string;
+  durationMs: number;
+}
+
+/**
+ * Discriminated-union flavour of {@link ApiResponse} for callers that prefer
+ * exhaustive `switch` over try/catch. Produced by the `*Safe` family of
+ * helpers (not implemented in this fixture but reserved in the type surface).
+ */
+export type ApiResult<T> =
+  | { ok: true; data: T; response: ApiResponse<T> }
+  | { ok: false; error: ApiError };
+
+/**
+ * Cursor-style paginator returned by {@link ApiClient.paginate}.
+ * Implementations are expected to be lazy — `all()` is a convenience that
+ * [DRIP-javadoc-elided: original L109-L111, 2 lines | drip refresh for full]
+ */
+export interface Paginator<T> {
+  /** True iff another page has been observed or has not yet been fetched. */
+  readonly hasMore: boolean;
+  /** Fetch the next page. Resolves to `null` once the cursor is exhausted. */
+  next(): Promise<T[] | null>;
+  /** Drain every remaining page into a single array. Use with care. */
+  all(): Promise<T[]>;
+}
+
+/**
+ * Error thrown for any non-2xx response or transport failure.
+ * The original parsed body (if any) is attached as `body`; useful for
+ * [DRIP-javadoc-elided: original L124-L126, 2 lines | drip refresh for full]
+ */
+export class ApiError extends Error {
+  public readonly status: number;
+  public readonly body: unknown;
+  public readonly requestId: string;
+
+  constructor(message: string, status: number, body: unknown, requestId: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.requestId = requestId;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+
+  /** True for 5xx and network-layer errors — i.e. retry candidates. */
+  public isTransient(): boolean {
+    return this.status >= 500 || this.status === 0 || this.status === 429;
+  }
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_RETRIES = 3;
+const DEFAULT_RETRY_DELAY_MS = 250;
+const IDEMPOTENT_METHODS = new Set(["GET", "PUT", "DELETE"]);
+
+/**
+ * Thin, opinionated HTTP client built on top of `fetch`.
+ * Handles auth refresh, exponential backoff, query serialization, and
+ * [DRIP-javadoc-elided: original L155-L157, 2 lines | drip refresh for full]
+ */
+export class ApiClient {
+  protected readonly config: Readonly<ApiConfig>;
+  protected cachedToken: string | null = null;
+  protected tokenExpiresAt: number = 0;
+
+  constructor(config: Partial<ApiConfig> & Pick<ApiConfig, "baseUrl">) {
+    const headers = { "content-type": "application/json", accept: "application/json", ...(config.headers ?? {}) };
+    this.config = Object.freeze({
+      baseUrl: config.baseUrl.replace(/\/+$/, ""),
+      timeout: config.timeout ?? DEFAULT_TIMEOUT_MS,
+      retries: config.retries ?? DEFAULT_RETRIES,
+      retryDelayMs: config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+      headers,
+      authStrategy: config.authStrategy ?? AuthStrategy.None,
+      tokenProvider: config.tokenProvider,
+    });
+  }
+
+  /**
+   * Issue a `GET` request and decode the response.
+   * @param path  Path joined to {@link ApiConfig.baseUrl}. May start with `/` or not.
+   * @param options Optional per-request overrides.
+   * @throws {ApiError} on non-2xx or transport failure after retries are exhausted.
+   * [DRIP-javadoc-elided: original L179-L182, 2 lines | drip refresh for full]
+   */
+  public async get<T>(path: string, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<ApiResponse<T>> {
+    const url = this.buildUrl(path, options.query);
+    const headers = await this.composeHeaders(options.headers);
+    const start = performance.now();
+    const requestId = randomUUID();
+    const response = await this.retry(async () => {
+      const ctrl = this.linkAbort(options.signal);
+      try {
+        return await fetch(url, { method: "GET", headers, signal: ctrl.signal });
+      } finally {
+        ctrl.cleanup();
+      }
+    }, "GET");
+    return this.unwrap<T>(response, options.parseAs ?? "json", requestId, start);
+  }
+
+  /**
+   * Issue a `POST` with a JSON body.
+   * @throws {ApiError} when the server returns >=400 after retries.
+   * [DRIP-javadoc-elided: original L203-L205, 3 lines | drip refresh for full]
+   */
+  public async post<TBody, TResp>(path: string, body: TBody, options: Omit<RequestOptions<TBody>, "method" | "body"> = {}): Promise<ApiResponse<TResp>> {
+    const url = this.buildUrl(path, options.query);
+    const headers = await this.composeHeaders(options.headers);
+    const payload = this.serializeRequest(body, headers);
+    const start = performance.now();
+    const requestId = randomUUID();
+    const response = await this.retry(async () => {
+      const ctrl = this.linkAbort(options.signal);
+      try {
+        return await fetch(url, { method: "POST", headers, body: payload, signal: ctrl.signal });
+      } finally {
+        ctrl.cleanup();
+      }
+    }, "POST");
+    return this.unwrap<TResp>(response, options.parseAs ?? "json", requestId, start);
+  }
+
+  /**
+   * Issue a `PUT` (full-replacement) request.
+   * Treated as idempotent for the purpose of retry: a transient 5xx will be
+   * [DRIP-javadoc-elided: original L227-L229, 2 lines | drip refresh for full]
+   */
+  public async put<TBody, TResp>(path: string, body: TBody, options: Omit<RequestOptions<TBody>, "method" | "body"> = {}): Promise<ApiResponse<TResp>> {
+    const url = this.buildUrl(path, options.query);
+    const headers = await this.composeHeaders(options.headers);
+    const payload = this.serializeRequest(body, headers);
+    const start = performance.now();
+    const requestId = randomUUID();
+    const response = await this.retry(async () => {
+      const ctrl = this.linkAbort(options.signal);
+      try {
+        return await fetch(url, { method: "PUT", headers, body: payload, signal: ctrl.signal });
+      } finally {
+        ctrl.cleanup();
+      }
+    }, "PUT");
+    return this.unwrap<TResp>(response, options.parseAs ?? "json", requestId, start);
+  }
+
+  /**
+   * Issue a `PATCH` (partial-update) request.
+   * NOT retried by default since PATCH is generally non-idempotent on the wire.
+   * [DRIP-javadoc-elided: original L250-L252, 2 lines | drip refresh for full]
+   */
+  public async patch<TBody, TResp>(path: string, body: Partial<TBody>, options: Omit<RequestOptions<TBody>, "method" | "body"> = {}): Promise<ApiResponse<TResp>> {
+    const url = this.buildUrl(path, options.query);
+    const headers = await this.composeHeaders(options.headers);
+    const payload = this.serializeRequest(body, headers);
+    const start = performance.now();
+    const requestId = randomUUID();
+    const ctrl = this.linkAbort(options.signal);
+    try {
+      const response = await fetch(url, { method: "PATCH", headers, body: payload, signal: ctrl.signal });
+      return await this.unwrap<TResp>(response, options.parseAs ?? "json", requestId, start);
+    } finally {
+      ctrl.cleanup();
+    }
+  }
+
+  /**
+   * Issue a `DELETE` request.
+   *          most APIs return `{}` or a 204 No Content.
+   * [DRIP-javadoc-elided: original L271-L272, 2 lines | drip refresh for full]
+   */
+  public async delete<T = unknown>(path: string, options: Omit<RequestOptions, "method" | "body"> = {}): Promise<ApiResponse<T>> {
+    const url = this.buildUrl(path, options.query);
+    const headers = await this.composeHeaders(options.headers);
+    const start = performance.now();
+    const requestId = randomUUID();
+    const response = await this.retry(async () => {
+      const ctrl = this.linkAbort(options.signal);
+      try {
+        return await fetch(url, { method: "DELETE", headers, signal: ctrl.signal });
+      } finally {
+        ctrl.cleanup();
+      }
+    }, "DELETE");
+    return this.unwrap<T>(response, options.parseAs ?? "json", requestId, start);
+  }
+
+  /**
+   * Walk a cursor-paginated collection lazily.
+   * Yields each page as it arrives; the consumer can `break` early without
+   * [DRIP-javadoc-elided: original L293-L296, 3 lines | drip refresh for full]
+   */
+  public async *paginate<T>(path: string, pageSize = 100, options: Omit<RequestOptions, "method" | "body"> = {}): AsyncGenerator<T[], void, void> {
+    /* [DRIP-elided: original L299-L336, 38 lines | drip refresh to expand] */
+  }
+
+  /**
+   * Run `fn` with exponential backoff + jitter on transient failure.
+   * Only retries when `method` is in {@link IDEMPOTENT_METHODS} and the error
+   * [DRIP-javadoc-elided: original L341-L343, 2 lines | drip refresh for full]
+   */
+  protected async retry(fn: () => Promise<Response>, method: string): Promise<Response> {
+    /* [DRIP-elided: original L346-L385, 40 lines | drip refresh to expand] */
+  }
+
+  /**
+   * Bootstrap an authenticated session.
+   * For OAuth2 this performs a client-credentials exchange against
+   * [DRIP-javadoc-elided: original L390-L393, 3 lines | drip refresh for full]
+   */
+  public async authenticate(): Promise<void> {
+    /* [DRIP-elided: original L396-L440, 45 lines | drip refresh to expand] */
+  }
+
+  /**
+   * Force-refresh the OAuth2 token, ignoring TTL cache.
+   * Call this from a 401 interceptor after the server tells you the token
+   * [DRIP-javadoc-elided: original L445-L448, 3 lines | drip refresh for full]
+   */
+  public async refreshToken(): Promise<string> {
+    if (this.config.authStrategy !== AuthStrategy.OAuth2) {
+      throw new ApiError("refreshToken only valid for OAuth2", 0, null, randomUUID());
+    }
+    this.cachedToken = null;
+    this.tokenExpiresAt = 0;
+    await this.authenticate();
+    if (!this.cachedToken) {
+      throw new ApiError("token refresh failed: provider returned empty", 0, null, randomUUID());
+    }
+    return this.cachedToken;
+  }
+
+  /**
+   * Serialize a request body for transport.
+   * Strings, ArrayBuffers, and FormData pass through untouched. Plain objects
+   * [DRIP-javadoc-elided: original L465-L467, 2 lines | drip refresh for full]
+   */
+  protected serializeRequest(body: unknown, headers: Record<string, string>): BodyInit | undefined {
+    if (body === undefined || body === null) return undefined;
+    if (typeof body === "string") return body;
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body as BodyInit;
+    if (typeof FormData !== "undefined" && body instanceof FormData) {
+      delete headers["content-type"];
+      return body;
+    }
+    if (!headers["content-type"]) headers["content-type"] = "application/json";
+    return JSON.stringify(body);
+  }
+
+  /**
+   * Translate a non-OK response into an {@link ApiError}.
+   * Best-effort body parsing — falls back to the raw text when JSON decoding
+   * [DRIP-javadoc-elided: original L483-L485, 2 lines | drip refresh for full]
+   */
+  protected async handleError(response: Response, requestId: string): Promise<never> {
+    /* [DRIP-elided: original L488-L526, 39 lines | drip refresh to expand] */
+  }
+
+  protected buildUrl(path: string, query?: RequestOptions["query"]): string {
+    const base = path.startsWith("http") ? path : `${this.config.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+    if (!query) return base;
+    const url = new URL(base);
+    for (const [k, v] of Object.entries(query)) {
+      if (v === null || v === undefined) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) url.searchParams.append(k, String(item));
+      } else {
+        url.searchParams.set(k, String(v));
+      }
+    }
+    return url.toString();
+  }
+
+  protected async composeHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+    /* [DRIP-elided: original L545-L574, 30 lines | drip refresh to expand] */
+  }
+
+  protected linkAbort(external?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error("request timeout")), this.config.timeout);
+    const onExternal = () => ctrl.abort(external?.reason);
+    if (external) external.addEventListener("abort", onExternal, { once: true });
+    return {
+      signal: ctrl.signal,
+      cleanup: () => {
+        clearTimeout(timer);
+        if (external) external.removeEventListener("abort", onExternal);
+      },
+    };
+  }
+
+  protected async unwrap<T>(response: Response, parseAs: ParseMode, requestId: string, start: number): Promise<ApiResponse<T>> {
+    /* [DRIP-elided: original L592-L629, 38 lines | drip refresh to expand] */
+  }
+}
+
+/**
+ * Convenience factory that validates `config` against a zod schema before
+ * handing it to the constructor. Throws `ZodError` on shape mismatch.
+ */
+export function createClient(config: Partial<ApiConfig> & { baseUrl: string }): ApiClient {
+  const schema = z.object({
+    baseUrl: z.string().url(),
+    timeout: z.number().int().positive().optional(),
+    retries: z.number().int().min(0).max(10).optional(),
+    retryDelayMs: z.number().int().positive().optional(),
+  });
+  schema.parse({ baseUrl: config.baseUrl, timeout: config.timeout, retries: config.retries, retryDelayMs: config.retryDelayMs });
+  return new ApiClient(config);
+}

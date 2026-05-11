@@ -1,0 +1,81 @@
+name: security
+
+# Deep security sweep — runs on PRs, pushes to main/develop, and on
+# a weekly schedule so newly-published advisories surface even when
+# we haven't bumped Cargo.lock. The fast `cargo audit` strict check
+# also runs in ci.yml; this workflow adds:
+#
+#   - cargo-deny  → advisories + licenses + bans + sources (supply chain)
+#   - dep-review  → GitHub-side diff of dependencies on PRs only
+#   - schedule    → weekly rescan against the freshest RustSec DB
+#
+# Why a separate workflow: cargo-deny installs a binary and runs
+# four checks (~30 s). Keeping it out of the hot CI path lets the
+# fast clippy/test loop stay snappy.
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  schedule:
+    # Monday 06:00 UTC — early enough that any failure surfaces
+    # before the working week starts.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Supply-chain sweep — license policy, banned crates, advisory DB,
+  # and crate-source allowlist. Config lives in deny.toml at the repo
+  # root so the same checks are reproducible locally:
+  #   cargo install --locked cargo-deny
+  #   cargo deny check
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # Run every check class. `check` is a no-op default; passing
+          # the explicit list makes the intent obvious in workflow logs.
+          command: check advisories licenses bans sources
+
+  # Compares the Cargo.lock / package graph between the PR head and
+  # its base, blocking PRs that introduce dependencies with known
+  # high-severity advisories or incompatible licenses. PR-only because
+  # the diff is meaningless on a direct push.
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  # Scheduled-only rescan of the latest released tag against the
+  # freshest RustSec advisory DB. Catches advisories that landed
+  # after our last commit. Skipped on PR / push (covered by the
+  # ci.yml audit job).
+  scheduled-audit:
+    name: scheduled cargo-audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

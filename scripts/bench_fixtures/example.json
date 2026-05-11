@@ -1,0 +1,21 @@
+{
+  "name": "drip",
+  "version": "0.1.0",
+  "description": "Delta Read Interception Proxy — sends only file diffs to your LLM agent",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/drip-cli/drip",
+  "deps": {
+    "serde_json": "1",
+    "sha2": "0.10",
+    "anyhow": "1",
+    "regex": "1",
+    "flate2": "1"
+  },
+  "tags": [
+    "llm",
+    "tokens",
+    "claude-code",
+    "diff",
+    "agent"
+  ]
+}

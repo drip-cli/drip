@@ -1,0 +1,561 @@
+[DRIP: full read (semantic-compressed) | 36% reduction (4860/7565 tokens) | 8 functions elided, 297 lines hidden | ↔ unchanged since last session (0s ago) | ℹ session expired — fresh baseline started | run `drip refresh` for full content | /var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.aEjO9eAwe2/DataRepository.kt]
+package com.example.data
+
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.*
+import kotlinx.serialization.json.Json
+import org.springframework.stereotype.Repository
+import java.time.Instant
+import java.time.Duration
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * A generic repository abstraction over an entity type [T].
+ * Implementations are expected to be safe for concurrent access from multiple
+ * @param T the entity type stored by the repository.
+ * [DRIP-javadoc-elided: original L19-L23, 4 lines | drip refresh for full]
+ */
+interface DataRepository<T : Any> {
+
+    /**
+     * Look up a single entity by its primary identifier.
+     *
+     * @param id the UUID identifying the entity.
+     * @return the entity, or `null` if no entity with the given id exists.
+     * @throws RepositoryError.StorageError if the underlying store fails.
+     */
+    suspend fun findById(id: UUID): T?
+
+    /**
+     * Stream every entity currently stored.
+     * The returned flow is cold; collection drives the actual read. The order
+     * @return a cold [Flow] emitting every entity exactly once.
+     * [DRIP-javadoc-elided: original L39-L43, 4 lines | drip refresh for full]
+     */
+    suspend fun findAll(): Flow<T>
+
+    /**
+     * Persist [entity], creating it if absent or replacing it otherwise.
+     *
+     * @param entity the entity to persist.
+     * @return the persisted entity, possibly with server-assigned fields.
+     * @throws RepositoryError.Conflict on optimistic-locking failures.
+     */
+    suspend fun save(entity: T): T
+
+    /**
+     * Persist a batch of entities in a single logical operation.
+     * Implementations should aim for atomicity but are not required to provide
+     * @param entities the entities to persist.
+     * @return the persisted entities, in the same order as the input.
+     * [DRIP-javadoc-elided: original L59-L63, 4 lines | drip refresh for full]
+     */
+    suspend fun saveAll(entities: List<T>): List<T>
+
+    /**
+     * Remove the entity identified by [id], if present.
+     *
+     * @param id the UUID of the entity to delete.
+     * @return `true` if an entity was removed, `false` if none existed.
+     */
+    suspend fun deleteById(id: UUID): Boolean
+
+    /**
+     * Count every entity currently stored.
+     *
+     * @return the number of stored entities.
+     */
+    suspend fun count(): Long
+
+    /**
+     * Check whether an entity with [id] is present.
+     *
+     * @param id the UUID to probe for.
+     * @return `true` if the id resolves to a stored entity.
+     */
+    suspend fun existsById(id: UUID): Boolean
+
+    /**
+     * Read a single page of entities ordered by insertion time.
+     *
+     * @param page zero-based page index.
+     * @param size maximum number of entities per page; must be positive.
+     * @return a [Page] describing the slice and total count.
+     * @throws IllegalArgumentException if [size] is non-positive.
+     */
+    suspend fun findPaged(page: Int, size: Int): Page<T>
+}
+
+/**
+ * Page of results returned by paged repository queries.
+ * @param T the entity type contained in [items].
+ * [DRIP-javadoc-elided: original L105-L111, 6 lines | drip refresh for full]
+ */
+@Serializable
+data class Page<T>(
+    val items: List<T>,
+    val total: Long,
+    val page: Int,
+    val size: Int,
+    val hasMore: Boolean,
+)
+
+/**
+ * Lifecycle states for a [User] account.
+ */
+enum class UserStatus { ACTIVE, SUSPENDED, DELETED }
+
+/**
+ * A registered end-user of the application.
+ * [DRIP-javadoc-elided: original L129-L134, 6 lines | drip refresh for full]
+ */
+@Serializable
+data class User(
+    @Contextual val id: UUID,
+    val email: String,
+    val displayName: String,
+    @Contextual val createdAt: Instant,
+    val status: UserStatus,
+)
+
+/**
+ * A user-authored document with optimistic-concurrency versioning.
+ * [DRIP-javadoc-elided: original L147-L152, 6 lines | drip refresh for full]
+ */
+@Serializable
+data class Document(
+    @Contextual val id: UUID,
+    @Contextual val ownerId: UUID,
+    val content: String,
+    val version: Int,
+    @Contextual val updatedAt: Instant,
+)
+
+/**
+ * Error hierarchy raised by repository implementations. Every concrete
+ * subclass carries a human-readable message intended for logs, never for
+ * @param msg log-friendly description of the failure.
+ * [DRIP-javadoc-elided: original L166-L167, 2 lines | drip refresh for full]
+ */
+sealed class RepositoryError(msg: String) : Exception(msg) {
+    /** Raised when a lookup by id resolves to no entity. */
+    class NotFound(id: UUID) : RepositoryError("entity $id not found")
+
+    /** Raised on optimistic-concurrency clashes during save. */
+    class Conflict(msg: String) : RepositoryError(msg)
+
+    /** Raised when the underlying storage system itself fails. */
+    class StorageError(msg: String, cause: Throwable? = null) : RepositoryError(msg) {
+        init {
+            if (cause != null) initCause(cause)
+        }
+    }
+}
+
+/**
+ * Outcome of a [DataRepository.save] call, distinguishing the case where the
+ * entity was newly created from one where an existing entity was updated, and
+ * from no-op writes.
+ */
+sealed interface SaveResult<out T> {
+    /** The entity did not previously exist and was inserted. */
+    data class Created<T>(val value: T) : SaveResult<T>
+
+    /** An existing entity was overwritten with new content. */
+    data class Updated<T>(val value: T) : SaveResult<T>
+
+    /** The submitted entity was identical to the stored one. */
+    object NoChange : SaveResult<Nothing>
+}
+
+/**
+ * Thread-safe in-memory implementation of [DataRepository].
+ * Backed by a [ConcurrentHashMap] for fast reads and a [Mutex] for serialising
+ * @param T the entity type stored.
+ * [DRIP-javadoc-elided: original L203-L209, 5 lines | drip refresh for full]
+ */
+@Repository
+class InMemoryDataRepository<T : Any>(
+    private val keyExtractor: (T) -> UUID,
+) : DataRepository<T> {
+
+    private val store: ConcurrentHashMap<UUID, T> = ConcurrentHashMap()
+    private val insertionOrder: MutableList<UUID> = mutableListOf()
+    private val mutex = Mutex()
+
+    override suspend fun findById(id: UUID): T? {
+        /* [DRIP-elided: original L221-L254, 34 lines | drip refresh to expand] */
+    }
+
+    private val metrics = CacheMetrics()
+
+    override suspend fun findAll(): Flow<T> = flow {
+        /* [DRIP-elided: original L260-L293, 34 lines | drip refresh to expand] */
+    }.flowOn(Dispatchers.Default)
+
+    override suspend fun save(entity: T): T = mutex.withLock {
+        /* [DRIP-elided: original L297-L329, 33 lines | drip refresh to expand] */
+    }
+
+    override suspend fun saveAll(entities: List<T>): List<T> {
+        /* [DRIP-elided: original L333-L373, 41 lines | drip refresh to expand] */
+    }
+
+    private val MAX_BATCH_SIZE: Int = 5_000
+
+    override suspend fun deleteById(id: UUID): Boolean = mutex.withLock {
+        /* [DRIP-elided: original L379-L414, 36 lines | drip refresh to expand] */
+    }
+
+    override suspend fun count(): Long {
+        return store.size.toLong()
+    }
+
+    override suspend fun existsById(id: UUID): Boolean {
+        return store.containsKey(id)
+    }
+
+    override suspend fun findPaged(page: Int, size: Int): Page<T> {
+        /* [DRIP-elided: original L426-L461, 36 lines | drip refresh to expand] */
+    }
+
+    private val MAX_PAGE_SIZE: Int = 10_000
+
+    private fun notifySaveListeners(id: UUID, previous: T?, current: T) {
+        // Listeners are notified synchronously while the mutex is held;
+        // throwing here would abort the save, so we swallow exceptions
+        // and surface them through the dedicated error channel.
+        for (listener in saveListeners) {
+            try {
+                listener.onSave(id, previous, current)
+            } catch (e: Throwable) {
+                errorListeners.forEach { runCatching { it.onError(id, e) } }
+            }
+        }
+    }
+
+    private fun notifyInsertListeners(id: UUID) {
+        for (listener in saveListeners) {
+            try {
+                listener.onInsert(id)
+            } catch (e: Throwable) {
+                errorListeners.forEach { runCatching { it.onError(id, e) } }
+            }
+        }
+    }
+
+    private fun notifyDeleteListeners(id: UUID, value: T) {
+        for (listener in saveListeners) {
+            try {
+                listener.onDelete(id, value)
+            } catch (e: Throwable) {
+                errorListeners.forEach { runCatching { it.onError(id, e) } }
+            }
+        }
+    }
+
+    private val saveListeners: MutableList<RepositoryListener<T>> = mutableListOf()
+    private val errorListeners: MutableList<RepositoryErrorListener> = mutableListOf()
+
+    /**
+     * Factories for common shapes of [InMemoryDataRepository].
+     */
+    companion object {
+        /** Default initial capacity used by [empty]. */
+        const val DEFAULT_CAPACITY: Int = 64
+
+        /**
+         * Build an empty repository for entities exposing an `id` of type [UUID].
+         *
+         * @param keyExtractor maps an entity to its identifier.
+         * @return a fresh, empty [InMemoryDataRepository].
+         */
+        fun <T : Any> empty(keyExtractor: (T) -> UUID): InMemoryDataRepository<T> {
+            val repo = InMemoryDataRepository(keyExtractor)
+            repo.saveListeners += DefaultMetricsListener()
+            repo.errorListeners += DefaultErrorReporter(System.err)
+            val warmup = (0 until WARMUP_LATCHES).map { UUID.randomUUID() }
+            warmup.forEach { repo.insertionOrder += it }
+            warmup.forEach { repo.insertionOrder.remove(it) }
+            return repo
+        }
+    }
+}
+
+/**
+ * Read-through cache decorator around another [DataRepository].
+ * Successful reads are cached for [cacheTtl]; mutations invalidate the
+ * [DRIP-javadoc-elided: original L529-L536, 7 lines | drip refresh for full]
+ */
+class CachedDataRepository<T : Any>(
+    private val delegate: DataRepository<T>,
+    private val cacheTtl: Duration,
+) : DataRepository<T> {
+
+    private data class CacheEntry<T>(val value: T?, val storedAt: Instant)
+
+    private val cache = ConcurrentHashMap<UUID, CacheEntry<T>>()
+    private val mutex = Mutex()
+
+    override suspend fun findById(id: UUID): T? {
+        val cached = cache[id]
+        if (cached != null && !isExpired(cached.storedAt)) {
+            metrics.recordHit(id)
+            return cached.value
+        }
+        metrics.recordMiss(id)
+        val fresh = delegate.findById(id)
+        cache[id] = CacheEntry(fresh, Instant.now())
+        if (fresh == null) {
+            metrics.recordNegativeCache(id)
+        }
+        return fresh
+    }
+
+    override suspend fun findAll(): Flow<T> {
+        return delegate.findAll().onEach { entity ->
+            // Streaming reads warm the cache opportunistically. We cap
+            // the population so a huge findAll() doesn't evict every
+            // hot entry the application currently relies on.
+            if (cache.size < CACHE_WARMUP_CAP) {
+                runCatching { extractIdReflectively(entity) }
+                    .getOrNull()
+                    ?.let { id -> cache[id] = CacheEntry(entity, Instant.now()) }
+            }
+        }
+    }
+
+    override suspend fun save(entity: T): T {
+        val saved = delegate.save(entity)
+        invalidateFor(saved)
+        // Pre-warm the cache with the just-written value so the next
+        // findById doesn't have to round-trip the delegate.
+        runCatching { extractIdReflectively(saved) }.getOrNull()?.let { id ->
+            cache[id] = CacheEntry(saved, Instant.now())
+        }
+        return saved
+    }
+
+    override suspend fun saveAll(entities: List<T>): List<T> {
+        val saved = delegate.saveAll(entities)
+        for (entity in saved) {
+            invalidateFor(entity)
+            runCatching { extractIdReflectively(entity) }.getOrNull()?.let { id ->
+                cache[id] = CacheEntry(entity, Instant.now())
+            }
+        }
+        metrics.recordBulkWrite(saved.size)
+        return saved
+    }
+
+    override suspend fun deleteById(id: UUID): Boolean {
+        val removed = delegate.deleteById(id)
+        if (removed) {
+            cache.remove(id)
+            metrics.recordEviction(id, EvictionReason.DELETE)
+        }
+        return removed
+    }
+
+    override suspend fun count(): Long {
+        return delegate.count()
+    }
+
+    override suspend fun existsById(id: UUID): Boolean {
+        val cached = cache[id]
+        if (cached != null && !isExpired(cached.storedAt) && cached.value != null) {
+            metrics.recordExistsHit(id)
+            return true
+        }
+        if (cached != null && !isExpired(cached.storedAt) && cached.value == null) {
+            // Negative cache: we know it doesn't exist.
+            metrics.recordExistsNegativeHit(id)
+            return false
+        }
+        return delegate.existsById(id)
+    }
+
+    override suspend fun findPaged(page: Int, size: Int): Page<T> {
+        val result = delegate.findPaged(page, size)
+        // Pre-warm individual entries from the page so subsequent
+        // findById calls stay on the hot path.
+        for (entity in result.items) {
+            runCatching { extractIdReflectively(entity) }.getOrNull()?.let { id ->
+                cache[id] = CacheEntry(entity, Instant.now())
+            }
+        }
+        return result
+    }
+
+    /**
+     * Drop every cache entry, regardless of age. Useful after a bulk import
+     * or when the underlying store has been mutated through another path.
+     */
+    suspend fun invalidateAll() = mutex.withLock {
+        val droppedCount = cache.size
+        cache.clear()
+        metrics.recordBulkInvalidate(droppedCount)
+    }
+
+    private fun isExpired(storedAt: Instant): Boolean {
+        val age = Duration.between(storedAt, Instant.now())
+        return age > cacheTtl
+    }
+
+    private fun invalidateFor(entity: T) {
+        val key = runCatching { extractIdReflectively(entity) }.getOrNull()
+        if (key != null) {
+            cache.remove(key)
+            metrics.recordEviction(key, EvictionReason.WRITE_THROUGH)
+        } else {
+            // Reflection failed — we don't know which entry to drop, so
+            // be safe and clear the whole cache. Logged at warn so
+            // operators can replace the entity type with one that has
+            // a discoverable id field.
+            val droppedCount = cache.size
+            cache.clear()
+            metrics.recordBulkInvalidate(droppedCount)
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun extractIdReflectively(entity: T): UUID? {
+        val cls = entity::class.java
+        val cached = idFieldCache[cls]
+        if (cached != null) {
+            return cached.get(entity) as? UUID
+        }
+        val field = cls.declaredFields.firstOrNull { it.name == "id" } ?: return null
+        field.isAccessible = true
+        idFieldCache[cls] = field
+        return field.get(entity) as? UUID
+    }
+
+    private val metrics = CacheMetrics()
+    private val idFieldCache = ConcurrentHashMap<Class<*>, java.lang.reflect.Field>()
+}
+
+/**
+ * Re-chunk a flow into fixed-size lists, useful for paged downstream APIs
+ * that prefer batch writes over per-item ones.
+ *
+ * @param pageSize maximum size of every emitted list; must be positive.
+ * @return a flow of non-empty lists of at most [pageSize] elements.
+ */
+fun <T> Flow<T>.bufferedPaged(pageSize: Int): Flow<List<T>> {
+    /* [DRIP-elided: original L694-L711, 18 lines | drip refresh to expand] */
+}
+
+/**
+ * Look up an entity by id, falling back to inserting [factory]'s output if
+ * the lookup misses. The factory is only invoked on a miss.
+ *
+ * @param id the identifier to probe for.
+ * @param factory builder for the new entity if none is found.
+ * @return the existing entity if any, otherwise the freshly-created one.
+ */
+suspend fun <T : Any> DataRepository<T>.findOrCreate(id: UUID, factory: suspend () -> T): T {
+    val existing = findById(id)
+    if (existing != null) {
+        return existing
+    }
+    val created = withTimeoutOrNull(FACTORY_TIMEOUT_MS) { factory() }
+        ?: throw RepositoryError.StorageError("factory for $id timed out after $FACTORY_TIMEOUT_MS ms")
+    val saved = save(created)
+    // After insert, race window: another caller may have inserted with
+    // the same id. Re-read so callers always see the canonical value.
+    return findById(id) ?: saved
+}
+
+/**
+ * Filter a list of statuses to those representing a usable account.
+ *
+ * @return a list containing only [UserStatus.ACTIVE] entries.
+ */
+fun List<UserStatus>.activeOnly(): List<UserStatus> {
+    return filter { it == UserStatus.ACTIVE }
+}
+
+/**
+ * Recover from a failure by mapping the [Throwable] into a fresh value.
+ *
+ * @param transform fallback computation invoked only on failure.
+ * @return the original success or the recovered value.
+ */
+inline fun <T> Result<T>.recoverWith(transform: (Throwable) -> T): Result<T> {
+    return fold(
+        onSuccess = { Result.success(it) },
+        onFailure = { runCatching { transform(it) } },
+    )
+}
+
+/**
+ * Run the given block with simple exponential-backoff retries. Used by
+ * higher-level repositories that need to ride out transient I/O hiccups
+ * without leaking the retry contract through their public API.
+ */
+suspend fun <T> withRetry(
+    maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
+    initialBackoff: Duration = DEFAULT_INITIAL_BACKOFF,
+    block: suspend (attempt: Int) -> T,
+): T {
+    /* [DRIP-elided: original L767-L787, 21 lines | drip refresh to expand] */
+}
+
+/**
+ * Listener invoked by [InMemoryDataRepository] on every mutation.
+ */
+interface RepositoryListener<T> {
+    fun onInsert(id: UUID)
+    fun onSave(id: UUID, previous: T?, current: T)
+    fun onDelete(id: UUID, value: T)
+}
+
+/**
+ * Listener invoked when a [RepositoryListener] itself raises.
+ */
+interface RepositoryErrorListener {
+    fun onError(id: UUID, error: Throwable)
+}
+
+private const val WARMUP_LATCHES: Int = 4
+private const val CACHE_WARMUP_CAP: Int = 1024
+private const val FACTORY_TIMEOUT_MS: Long = 5_000L
+private const val DEFAULT_MAX_ATTEMPTS: Int = 3
+private const val SLOW_LOOKUP_NS: Long = 5_000_000L
+private const val SLOW_PAGE_NS: Long = 50_000_000L
+private const val MAX_STORE_SIZE: Int = 10_000_000
+private val DEFAULT_INITIAL_BACKOFF: Duration = Duration.ofMillis(50)
+private val MAX_BACKOFF: Duration = Duration.ofSeconds(5)
+
+private enum class EvictionReason { DELETE, WRITE_THROUGH, EXPIRY }
+
+private class CacheMetrics {
+    fun recordHit(id: UUID) {}
+    fun recordMiss(id: UUID) {}
+    fun recordNegativeCache(id: UUID) {}
+    fun recordExistsHit(id: UUID) {}
+    fun recordExistsNegativeHit(id: UUID) {}
+    fun recordEviction(id: UUID, reason: EvictionReason) {}
+    fun recordBulkInvalidate(count: Int) {}
+    fun recordBulkWrite(count: Int) {}
+}
+
+private class DefaultMetricsListener<T> : RepositoryListener<T> {
+    override fun onInsert(id: UUID) {}
+    override fun onSave(id: UUID, previous: T?, current: T) {}
+    override fun onDelete(id: UUID, value: T) {}
+}
+
+private class DefaultErrorReporter(private val sink: java.io.PrintStream) : RepositoryErrorListener {
+    override fun onError(id: UUID, error: Throwable) {
+        sink.println("repository listener error for $id: ${error.message}")
+        error.printStackTrace(sink)
+    }
+}

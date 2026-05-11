@@ -1,0 +1,451 @@
+[DRIP: full read (semantic-compressed) | 41% reduction (3549/5996 tokens) | 8 functions elided, 250 lines hidden | ↔ unchanged since last session (0s ago) | ℹ session expired — fresh baseline started | run `drip refresh` for full content | /var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.F5wupGw4cV/json_parser.cpp]
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <variant>
+#include <memory>
+#include <sstream>
+#include <charconv>
+#include <optional>
+#include <stdexcept>
+#include <cstdint>
+#include <string_view>
+#include <cstddef>
+#include <cmath>
+#include <cctype>
+
+namespace minijson {
+
+/**
+ * @brief Lexical token classes recognised by the scanner.
+ * The Error variant is reserved for unrecoverable lexer faults so
+ * the parser can bail out without throwing from inside the scan loop.
+ */
+enum class TokenType {
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Colon,
+    Comma,
+    String,
+    Number,
+    True,
+    False,
+    Null,
+    Eof,
+    Error,
+};
+
+/**
+ * @brief Categorises a parse failure for downstream reporting.
+ * Paired with the source position carried by ParseError to produce
+ * a human-readable diagnostic. Keep variants in sync with set_error().
+ */
+enum class ParseErrorKind {
+    UnexpectedChar,
+    UnterminatedString,
+    InvalidNumber,
+    InvalidEscape,
+    Overflow,
+    MaxDepth,
+};
+
+/**
+ * @brief A single lexical token produced by the scanner.
+ * Tokens own their lexeme so the parser can outlive the input buffer
+ * (e.g. when parsing into an AST that escapes the source string_view).
+ */
+struct Token {
+    TokenType type;
+    std::string lexeme;
+    std::size_t line;
+    std::size_t col;
+};
+
+class JsonValue;
+
+using JsonArray  = std::vector<JsonValue>;
+using JsonObject = std::unordered_map<std::string, JsonValue>;
+
+/**
+ * @brief Tagged union describing every node of a parsed JSON document.
+ * Accessors throw std::bad_variant_access on type mismatch; use the
+ * is_*() probes before calling as_*() if the schema is dynamic.
+ */
+class JsonValue {
+public:
+    using Storage = std::variant<
+        std::nullptr_t,
+        bool,
+        std::int64_t,
+        double,
+        std::string,
+        JsonArray,
+        JsonObject>;
+
+    /// Default-constructs a null value.
+    JsonValue() : data_(nullptr) {}
+
+    /// Constructs a value from any compatible payload.
+    template <typename T>
+    JsonValue(T&& v) : data_(std::forward<T>(v)) {}
+
+    bool is_null()   const { return std::holds_alternative<std::nullptr_t>(data_); }
+    bool is_object() const { return std::holds_alternative<JsonObject>(data_); }
+    bool is_array()  const { return std::holds_alternative<JsonArray>(data_); }
+    bool is_string() const { return std::holds_alternative<std::string>(data_); }
+    bool is_int()    const { return std::holds_alternative<std::int64_t>(data_); }
+    bool is_double() const { return std::holds_alternative<double>(data_); }
+    bool is_bool()   const { return std::holds_alternative<bool>(data_); }
+
+    /**
+     * @brief Borrow the underlying string payload.
+     * @return const reference to the stored string.
+     * @throws std::bad_variant_access if the value is not a string.
+     */
+    const std::string& as_string() const {
+        return std::get<std::string>(data_);
+    }
+
+    /**
+     * @brief Read the value as a 64-bit signed integer.
+     * @return the stored integer.
+     * @throws std::bad_variant_access if the value is not an int.
+     */
+    std::int64_t as_int() const {
+        return std::get<std::int64_t>(data_);
+    }
+
+    /**
+     * @brief Read the value as a double, widening from int when needed.
+     * @return the stored double, or the int payload converted to double.
+     * @throws std::bad_variant_access if the value is neither numeric.
+     */
+    double as_double() const {
+        if (std::holds_alternative<double>(data_)) {
+            return std::get<double>(data_);
+        }
+        return static_cast<double>(std::get<std::int64_t>(data_));
+    }
+
+    /// @return the underlying boolean. @throws on type mismatch.
+    bool as_bool() const {
+        return std::get<bool>(data_);
+    }
+
+    /// @return mutable access to the array payload.
+    JsonArray& as_array() { return std::get<JsonArray>(data_); }
+
+    /// @return mutable access to the object payload.
+    JsonObject& as_object() { return std::get<JsonObject>(data_); }
+
+    /// @return const access to the array payload.
+    const JsonArray& as_array() const { return std::get<JsonArray>(data_); }
+
+    /// @return const access to the object payload.
+    const JsonObject& as_object() const { return std::get<JsonObject>(data_); }
+
+    /// @return raw access to the underlying variant.
+    const Storage& storage() const { return data_; }
+
+private:
+    Storage data_;
+};
+
+/**
+ * @brief Exception thrown by JsonParser on unrecoverable parse faults.
+ * Carries a structured ParseErrorKind alongside 1-based line/column
+ * so callers can surface IDE-style diagnostics without re-parsing.
+ */
+class ParseError : public std::runtime_error {
+public:
+    /**
+     * @brief Construct a fully-described parse error.
+     * @param kind structured failure category.
+     * @param msg  human-readable narrative.
+     * @param line 1-based line number where the fault was detected.
+     * @param col  1-based column number where the fault was detected.
+     */
+    ParseError(ParseErrorKind kind, const std::string& msg,
+               std::size_t line, std::size_t col)
+        : std::runtime_error(msg), kind_(kind), line_(line), col_(col) {}
+
+    /// @return structured kind of this error.
+    ParseErrorKind kind() const noexcept { return kind_; }
+
+    /// @return 1-based source line.
+    std::size_t line() const noexcept { return line_; }
+
+    /// @return 1-based source column.
+    std::size_t col() const noexcept { return col_; }
+
+private:
+    ParseErrorKind kind_;
+    std::size_t line_;
+    std::size_t col_;
+};
+
+/**
+ * @brief Recursive-descent JSON parser; not thread-safe.
+ * Re-using the same instance across calls to parse() is supported
+ * and slightly cheaper than constructing a fresh one each time.
+ */
+class JsonParser {
+public:
+    /// Maximum nesting depth before MaxDepth is raised.
+    static constexpr std::size_t kDefaultMaxDepth = 256;
+
+    JsonParser() = default;
+
+    /**
+     * @brief Parse a complete JSON document.
+     * @param src input bytes; must be valid UTF-8.
+     * @return the root JsonValue.
+     * @throws ParseError on any lexical or syntactic fault.
+     */
+    JsonValue parse(std::string_view src) {
+        src_   = src;
+        pos_   = 0;
+        line_  = 1;
+        col_   = 1;
+        depth_ = 0;
+        peeked_.reset();
+        JsonValue root = parse_value();
+        Token tail = advance();
+        if (tail.type != TokenType::Eof) {
+            set_error(ParseErrorKind::UnexpectedChar,
+                      "trailing content after document", tail.line, tail.col);
+        }
+        return root;
+    }
+
+    /**
+     * @brief Parse the next value at the current position.
+     * @return the parsed JsonValue.
+     * @throws ParseError if the stream does not start a valid value.
+     */
+    JsonValue parse_value() {
+        /* [DRIP-elided: original L228-L247, 20 lines | drip refresh to expand] */
+    }
+
+    /**
+     * @brief Parse an object body, assuming the leading '{' is next.
+     * @return the populated JsonObject wrapped in a JsonValue.
+     * @throws ParseError on malformed key/value pairs.
+     */
+    JsonValue parse_object() {
+        /* [DRIP-elided: original L256-L277, 22 lines | drip refresh to expand] */
+    }
+
+    /**
+     * @brief Parse an array body, assuming the leading '[' is next.
+     * @return the populated JsonArray wrapped in a JsonValue.
+     * @throws ParseError on malformed elements or separators.
+     */
+    JsonValue parse_array() {
+        /* [DRIP-elided: original L286-L301, 16 lines | drip refresh to expand] */
+    }
+
+    /**
+     * @brief Decode the current string token into a UTF-8 std::string.
+     * @return the decoded string value.
+     * @throws ParseError on bad escapes or unterminated literals.
+     */
+    std::string parse_string() {
+        Token t = advance();
+        if (t.type != TokenType::String) {
+            set_error(ParseErrorKind::UnexpectedChar,
+                      "expected string", t.line, t.col);
+        }
+        return std::move(t.lexeme);
+    }
+
+    /**
+     * @brief Convert the current numeric token into int64 or double.
+     * @return a JsonValue holding either int64_t or double.
+     * @throws ParseError on overflow or syntactically invalid digits.
+     */
+    JsonValue parse_number() {
+        /* [DRIP-elided: original L324-L353, 30 lines | drip refresh to expand] */
+    }
+
+    /**
+     * @brief Match a fixed keyword such as "true", "false", or "null".
+     * @param expected the literal to match against the input.
+     * @param tt       the token type to emit on success.
+     * @return a Token carrying the matched lexeme.
+     */
+    Token parse_literal(std::string_view expected, TokenType tt) {
+        std::size_t start_line = line_;
+        std::size_t start_col  = col_;
+        for (char c : expected) {
+            if (pos_ >= src_.size() || src_[pos_] != c) {
+                set_error(ParseErrorKind::UnexpectedChar,
+                          "invalid literal", line_, col_);
+            }
+            ++pos_;
+            ++col_;
+        }
+        return Token{tt, std::string(expected), start_line, start_col};
+    }
+
+    /**
+     * @brief Look at the next token without consuming it.
+     * @return the next token; cached until the next advance().
+     */
+    Token peek() {
+        if (!peeked_.has_value()) {
+            peeked_ = scan();
+        }
+        return *peeked_;
+    }
+
+    /**
+     * @brief Consume and return the next token.
+     * @return the next token in the input.
+     */
+    Token advance() {
+        if (peeked_.has_value()) {
+            Token t = std::move(*peeked_);
+            peeked_.reset();
+            return t;
+        }
+        return scan();
+    }
+
+    /**
+     * @brief Consume the next token and assert it has the given type.
+     * @param tt the token type that must match.
+     * @throws ParseError if the actual type does not match @p tt.
+     */
+    void expect(TokenType tt) {
+        Token t = advance();
+        if (t.type != tt) {
+            set_error(ParseErrorKind::UnexpectedChar,
+                      "unexpected token", t.line, t.col);
+        }
+    }
+
+private:
+    /**
+     * @brief Raise a ParseError with a structured kind and source position.
+     * @param kind the structured failure category.
+     * @param msg  the human-readable narrative.
+     * @param line the 1-based line number of the offending byte.
+     * @param col  the 1-based column of the offending byte.
+     */
+    [[noreturn]] void set_error(ParseErrorKind kind, const std::string& msg,
+                                std::size_t line, std::size_t col) {
+        std::ostringstream os;
+        os << msg << " at " << line << ":" << col;
+        throw ParseError(kind, os.str(), line, col);
+    }
+
+    Token scan() {
+        /* [DRIP-elided: original L429-L453, 25 lines | drip refresh to expand] */
+    }
+
+    Token scan_string() {
+        /* [DRIP-elided: original L457-L513, 57 lines | drip refresh to expand] */
+    }
+
+    Token scan_number() {
+        std::size_t sl = line_, sc = col_, start = pos_;
+        if (src_[pos_] == '-') { ++pos_; ++col_; }
+        while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) { ++pos_; ++col_; }
+        if (pos_ < src_.size() && src_[pos_] == '.') {
+            ++pos_; ++col_;
+            while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) { ++pos_; ++col_; }
+        }
+        if (pos_ < src_.size() && (src_[pos_] == 'e' || src_[pos_] == 'E')) {
+            ++pos_; ++col_;
+            if (pos_ < src_.size() && (src_[pos_] == '+' || src_[pos_] == '-')) { ++pos_; ++col_; }
+            while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) { ++pos_; ++col_; }
+        }
+        return Token{TokenType::Number, std::string(src_.substr(start, pos_ - start)), sl, sc};
+    }
+
+    void skip_ws() {
+        while (pos_ < src_.size()) {
+            char c = src_[pos_];
+            if (c == ' ' || c == '\t' || c == '\r') { ++pos_; ++col_; }
+            else if (c == '\n') { ++pos_; ++line_; col_ = 1; }
+            else break;
+        }
+    }
+
+    std::string_view src_;
+    std::size_t pos_   = 0;
+    std::size_t line_  = 1;
+    std::size_t col_   = 1;
+    std::size_t depth_ = 0;
+    std::size_t max_depth_ = kDefaultMaxDepth;
+    std::optional<Token> peeked_;
+};
+
+/**
+ * @param  v the source value.
+ * @return populated optional on success, std::nullopt on type mismatch.
+ * [DRIP-javadoc-elided: original L551-L552, 2 lines | drip refresh for full]
+ */
+template <typename T>
+std::optional<T> coerce(const JsonValue& v);
+
+template <>
+std::optional<int> coerce<int>(const JsonValue& v) {
+    if (v.is_int()) {
+        std::int64_t raw = v.as_int();
+        if (raw < std::numeric_limits<int>::min() ||
+            raw > std::numeric_limits<int>::max()) {
+            return std::nullopt;
+        }
+        return static_cast<int>(raw);
+    }
+    if (v.is_double()) {
+        double d = v.as_double();
+        if (std::trunc(d) != d) return std::nullopt;
+        return static_cast<int>(d);
+    }
+    return std::nullopt;
+}
+
+template <>
+std::optional<double> coerce<double>(const JsonValue& v) {
+    if (v.is_double() || v.is_int()) {
+        return v.as_double();
+    }
+    return std::nullopt;
+}
+
+template <>
+std::optional<std::string> coerce<std::string>(const JsonValue& v) {
+    if (v.is_string()) return v.as_string();
+    return std::nullopt;
+}
+
+template <>
+std::optional<bool> coerce<bool>(const JsonValue& v) {
+    if (v.is_bool()) return v.as_bool();
+    return std::nullopt;
+}
+
+/**
+ * @brief Escape a raw string into a JSON-safe quoted literal.
+ * @param in the input bytes; assumed to be UTF-8.
+ * @return a quoted, escaped representation suitable for emission.
+ */
+std::string escape_string(std::string_view in) {
+    /* [DRIP-elided: original L603-L649, 47 lines | drip refresh to expand] */
+}
+
+/**
+ * @brief Serialise a JsonValue back to a compact JSON string.
+ * @param v the value to emit.
+ * @return a UTF-8 std::string containing valid JSON.
+ */
+std::string to_string(const JsonValue& v) {
+    /* [DRIP-elided: original L658-L688, 31 lines | drip refresh to expand] */
+}
+
+} // namespace minijson

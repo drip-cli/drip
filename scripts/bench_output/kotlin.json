@@ -1,0 +1,153 @@
+{
+  "language": "kotlin",
+  "fixture": "DataRepository.kt",
+  "lines": 840,
+  "bytes": 30260,
+  "first_read_rendered_bytes": 19766,
+  "workflows": {
+    "explore": {
+      "scope": "session",
+      "session_id": "bench-kotlin-explore-75430-22610",
+      "started_at": 1778519783,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 2,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 15130,
+      "tokens_sent": 4968,
+      "tokens_saved": 10162,
+      "reduction_pct": 67,
+      "dollars_saved": 0.030486,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 4.064800000000001,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.aEjO9eAwe2/DataRepository.kt",
+          "reads": 2,
+          "tokens_full": 15130,
+          "tokens_sent": 4968,
+          "tokens_saved": 10162,
+          "reduction_pct": 67
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "debug": {
+      "scope": "session",
+      "session_id": "bench-kotlin-debug-75430-22610",
+      "started_at": 1778519783,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 5,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 37825,
+      "tokens_sent": 5090,
+      "tokens_saved": 32735,
+      "reduction_pct": 87,
+      "dollars_saved": 0.098205,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 13.094000000000001,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.aEjO9eAwe2/DataRepository.kt",
+          "reads": 5,
+          "tokens_full": 37825,
+          "tokens_sent": 5090,
+          "tokens_saved": 32735,
+          "reduction_pct": 87
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "edit": {
+      "scope": "session",
+      "session_id": "bench-kotlin-edit-75430-22610",
+      "started_at": 1778519783,
+      "elapsed_secs": 1,
+      "files_tracked": 1,
+      "total_reads": 4,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 27742,
+      "tokens_sent": 5545,
+      "tokens_saved": 22197,
+      "reduction_pct": 80,
+      "dollars_saved": 0.06659100000000001,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 8.8788,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.aEjO9eAwe2/DataRepository.kt",
+          "reads": 4,
+          "tokens_full": 27742,
+          "tokens_sent": 5545,
+          "tokens_saved": 22197,
+          "reduction_pct": 80
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "multi_edit": {
+      "scope": "session",
+      "session_id": "bench-kotlin-multiedit-75430-22610",
+      "started_at": 1778519784,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 7,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 47919,
+      "tokens_sent": 25230,
+      "tokens_saved": 22689,
+      "reduction_pct": 47,
+      "dollars_saved": 0.068067,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 9.0756,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.aEjO9eAwe2/DataRepository.kt",
+          "reads": 7,
+          "tokens_full": 47919,
+          "tokens_sent": 25230,
+          "tokens_saved": 22689,
+          "reduction_pct": 47
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    }
+  },
+  "latency_ms": {
+    "first_read": {
+      "p50": 7.03,
+      "p95": 10.47,
+      "p99": 23.58
+    },
+    "unchanged": {
+      "p50": 5.91,
+      "p95": 6.65,
+      "p99": 8.32
+    },
+    "delta": {
+      "p50": 6.88,
+      "p95": 7.82,
+      "p99": 8.28
+    },
+    "samples_per_outcome": 45,
+    "raw_samples": 50,
+    "warmup_dropped": 5
+  }
+}

@@ -1,0 +1,35 @@
+# Build output
+/target
+**/*.rs.bk
+*.pdb
+
+# Note: Cargo.lock IS committed for binary crates (which DRIP is).
+# Do not add /Cargo.lock here.
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Local DRIP session databases (test artifacts, dev runs)
+*.db
+*.db-wal
+*.db-shm
+
+# Editors / IDEs
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Per-user agent config (output of `drip init`, not source).
+# Each developer's machine generates these with their own cargo bin path.
+.claude/
+.codex/
+.gemini/
+GEMINI.md
+
+# OS
+.DS_Store
+Thumbs.db

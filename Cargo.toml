@@ -1,0 +1,66 @@
+[package]
+# Crate name `drip-cli` (matches the GitHub org `drip-cli/drip`).
+# The binary stays named `drip` via `[[bin]]` below, so end users
+# `cargo install drip-cli` and run `drip ...` — a common pattern
+# when the natural binary name is already squatted on crates.io
+# (see e.g. `cargo-watch`, `mdbook-pdf`).
+name = "drip-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Delta Read Interception Proxy — sends only file diffs to your LLM agent"
+license = "Apache-2.0"
+authors = ["Perform Code SAS <contact@performcode.fr>"]
+repository = "https://github.com/drip-cli/drip"
+homepage = "https://github.com/drip-cli/drip"
+documentation = "https://github.com/drip-cli/drip#readme"
+readme = "README.md"
+keywords = ["llm", "tokens", "claude-code", "diff", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "/.github",
+    "/scripts",
+    "/tests/fixtures",
+    "/target",
+    "*.db",
+]
+
+[[bin]]
+name = "drip"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+similar = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+anyhow = "1"
+dirs = "5"
+globset = "0.4"
+walkdir = "2"
+# Default features pull in the right backend per OS — inotify on
+# Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows. We
+# previously hand-picked `macos_fsevent` only, which left `drip watch`
+# without a working backend on Linux/Windows.
+notify = "6"
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl"] }
+# `zcat`/`gunzip -c`/`gzip -dc` interception: pure-Rust gzip decoder.
+# We only enable the read-side feature set; nothing else from flate2's
+# deflate / zlib / multi-stream zoo is used.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

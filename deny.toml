@@ -1,0 +1,75 @@
+# cargo-deny configuration — runs in CI via
+# .github/workflows/security.yml, reproducible locally with:
+#   cargo install --locked cargo-deny
+#   cargo deny check
+#
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Audit every target so we don't miss a vulnerable crate hidden
+# behind a `cfg(windows)` branch we never build locally.
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ─── advisories ───────────────────────────────────────────────
+# RustSec security advisory DB. `deny` everything by default so a
+# stale Cargo.lock can't ship with a known CVE.
+[advisories]
+db-path = "$CARGO_HOME/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# ─── licenses ────────────────────────────────────────────────
+# Permissive licenses only. DRIP itself is Apache-2.0; we accept
+# dependencies that are equally or more permissive. Copyleft
+# (GPL/LGPL/AGPL) is rejected so the binary stays freely
+# redistributable.
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",   # ICU / unicode-ident
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",        # weak copyleft, file-scoped only — acceptable
+    "CC0-1.0",
+    "Unlicense",
+    "0BSD",
+]
+# Per-crate license exceptions go here if a transitive dep ships
+# under a tolerable-but-uncommon license. Empty by design — add an
+# entry only after reviewing the crate's terms.
+exceptions = []
+
+# ─── bans ────────────────────────────────────────────────────
+# Wildcard versions in our own Cargo.toml are forbidden — they
+# silently pull in major bumps with breaking changes. Multiple
+# versions of the same crate are *warned* (often unavoidable
+# transitively) but flagged so we can see when a manual bump
+# could consolidate.
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+# ─── sources ─────────────────────────────────────────────────
+# Only crates.io is allowed. A git dependency would mean the
+# binary's reproducibility relies on a non-immutable source —
+# blocked by default.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

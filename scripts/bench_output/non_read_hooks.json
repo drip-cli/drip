@@ -1,0 +1,30 @@
+{
+  "glob": {
+    "scenario": "find -type f over a synthetic project tree (sources + .git/ + target/ + node_modules/ + build/ + 3 lock files)",
+    "raw_paths": 28,
+    "filtered_paths": 19,
+    "paths_dropped": 9,
+    "raw_bytes": 2427,
+    "filtered_bytes": 1632,
+    "reduction_pct": 33,
+    "latency_ms": {
+      "p50": 1.74,
+      "p95": 2.23,
+      "p99": 2.68
+    }
+  },
+  "grep": {
+    "scenario": "rg '\\b(fn|def|func|function|public)\\b' over the same tree",
+    "raw_matches": 1146,
+    "filtered_matches": 346,
+    "matches_dropped": 800,
+    "raw_bytes": 157877,
+    "filtered_bytes": 51801,
+    "reduction_pct": 67,
+    "latency_ms": {
+      "p50": 4.25,
+      "p95": 5.52,
+      "p99": 5.57
+    }
+  }
+}

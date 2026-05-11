@@ -1,0 +1,109 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same branch/PR — saves CI minutes
+# when someone pushes a fixup commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Validate every commit message in the PR against Conventional
+  # Commits. release-please reads these to bump the version and
+  # generate the CHANGELOG, so a malformed message silently breaks
+  # the release pipeline. Catch it at PR time.
+  commitlint:
+    name: commit messages
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install commitlint
+        run: |
+          npm install --no-save \
+            @commitlint/cli \
+            @commitlint/config-conventional
+
+      - name: Lint PR commits
+        run: |
+          npx commitlint \
+            --from "${{ github.event.pull_request.base.sha }}" \
+            --to   "${{ github.event.pull_request.head.sha }}" \
+            --verbose
+
+  # Format + lint runs once on Linux only — fast feedback. clippy and
+  # rustfmt produce identical results across platforms, so multi-OS
+  # would just burn CI minutes.
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  # Test matrix runs on the three release-target OSes so OS-specific
+  # bugs (Windows path handling, macOS FSEvents, Linux inotify) get
+  # caught before they reach a release.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - name: cargo build
+        run: cargo build --all-targets --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
+  # Strict advisory check on every PR / push. The deeper security
+  # sweep (cargo-deny + dependency review + scheduled rescans against
+  # the freshest advisory DB) lives in `.github/workflows/security.yml`
+  # so a CI re-run doesn't drag a 30 s deny pass behind the fast lint
+  # + test loop.
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

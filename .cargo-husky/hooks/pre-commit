@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[husky] cargo fmt --all -- --check"
+cargo fmt --all -- --check
+
+echo "[husky] cargo clippy --all-targets --locked -- -D warnings"
+cargo clippy --all-targets --locked -- -D warnings

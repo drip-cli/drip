@@ -1,0 +1,306 @@
+[DRIP: full read (semantic-compressed) | 62% reduction (2575/6774 tokens) | 15 functions elided, 426 lines hidden | ↔ unchanged since last session (0s ago) | ℹ session expired — fresh baseline started | run `drip refresh` for full content | /var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.QSswMaxNNZ/pricing_engine.py]
+"""
+pricing_engine
+==============
+
+Production pricing engine for an e-commerce checkout flow.
+
+The engine takes an order — a list of line items, a customer record,
+optional discount codes, optional shipping selection — and returns a
+fully-broken-down `Invoice` ready to be persisted, displayed, or
+forwarded to a payment processor.
+
+Design goals:
+    * deterministic (same inputs → same outputs, byte-for-byte)
+    * tax-jurisdiction aware (per-item tax rates, not a single global rate)
+    * decimal-correct (no floats anywhere on the money path)
+    * idempotent caching (same order key → same cached invoice)
+    * observable (structured `compute_trace` for debugging)
+
+Public surface:
+
+    >>> engine = PricingEngine(catalog, tax_table, discount_registry)
+    >>> invoice = engine.calculate(order)
+    >>> engine.format(invoice)
+
+Anything else (cache layout, internal helpers) is implementation
+detail and may change between minor versions.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Configuration constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_CURRENCY = "USD"
+DEFAULT_LOCALE = "en_US"
+PRICE_QUANTIZE = Decimal("0.01")
+TAX_QUANTIZE = Decimal("0.0001")
+
+MAX_QUANTITY_PER_LINE = 9_999
+MAX_LINES_PER_ORDER = 500
+MAX_DISCOUNT_PCT = Decimal("90")
+MIN_INVOICE_TOTAL = Decimal("0.00")
+
+CACHE_DEFAULT_TTL_SECONDS = 600
+CACHE_MAX_ENTRIES = 4096
+
+DEFAULT_SHIPPING_TIERS: Dict[str, Decimal] = {
+    "standard": Decimal("4.99"),
+    "expedited": Decimal("9.99"),
+    "overnight": Decimal("24.99"),
+    "pickup": Decimal("0.00"),
+}
+
+
+# ---------------------------------------------------------------------------
+# Custom exceptions
+# ---------------------------------------------------------------------------
+
+
+class PricingError(Exception):
+    """Base class for every pricing-related failure.
+
+    Catch this in API handlers when you want a single
+    well-known boundary; downstream code can narrow on
+    subclasses (`InvalidOrder`, `DiscountRejected`,
+    `CatalogMissing`) for finer-grained behaviour.
+    """
+
+
+class InvalidOrder(PricingError):
+    """Raised when the supplied order fails structural validation.
+
+    Examples: empty line list, non-positive quantity,
+    negative price, more than `MAX_LINES_PER_ORDER`,
+    quantity above `MAX_QUANTITY_PER_LINE`.
+    """
+
+
+class DiscountRejected(PricingError):
+    """Raised when a discount code is present but cannot apply.
+
+    Reasons captured in the `reason` attribute: `expired`,
+    `unknown_code`, `min_order_not_met`, `customer_excluded`,
+    `over_max_pct`, `stacking_disallowed`.
+    """
+
+    def __init__(self, code: str, reason: str) -> None:
+        super().__init__(f"discount '{code}' rejected: {reason}")
+        self.code = code
+        self.reason = reason
+
+
+class CatalogMissing(PricingError):
+    """Raised when an order references a SKU not in the catalog.
+
+    The engine refuses to silently zero-price unknown SKUs —
+    fail-fast instead so the caller can re-fetch the catalog
+    or surface a real error to the customer.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LineItem:
+    """A single billable row inside an order.
+
+    `sku` is the catalog key. `quantity` must be a positive
+    integer; fractional quantities are not supported (use
+    a separate "weighted" SKU for produce / by-the-pound).
+    """
+
+    sku: str
+    quantity: int
+    note: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Customer:
+    """Customer-side context that influences pricing.
+
+    `tier` ("retail", "vip", "wholesale") drives the catalog
+    lookup; `tax_jurisdiction` is a free-form key matched
+    against the tax table.
+    """
+
+    customer_id: str
+    tier: str = "retail"
+    tax_jurisdiction: str = "DEFAULT"
+    is_first_order: bool = False
+
+
+@dataclass(frozen=True)
+class Order:
+    """Everything needed to compute an invoice."""
+
+    order_id: str
+    customer: Customer
+    lines: Tuple[LineItem, ...]
+    discount_codes: Tuple[str, ...] = ()
+    shipping: str = "standard"
+    placed_at: Optional[datetime] = None
+
+
+@dataclass
+class InvoiceLine:
+    """One row in the rendered invoice."""
+
+    sku: str
+    description: str
+    quantity: int
+    unit_price: Decimal
+    line_subtotal: Decimal
+    line_tax: Decimal
+    line_total: Decimal
+
+
+@dataclass
+class Invoice:
+    """The fully-priced output."""
+
+    order_id: str
+    currency: str
+    lines: List[InvoiceLine]
+    subtotal: Decimal
+    discount_total: Decimal
+    tax_total: Decimal
+    shipping_total: Decimal
+    grand_total: Decimal
+    discount_codes_applied: List[str] = field(default_factory=list)
+    compute_trace: List[str] = field(default_factory=list)
+    computed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# Standalone helpers
+# ---------------------------------------------------------------------------
+
+
+def round_currency(value: Decimal, quantum: Decimal = PRICE_QUANTIZE) -> Decimal:
+    """Round a money value using banker's rounding.
+
+    The default `PRICE_QUANTIZE` is two decimal places.
+    Pass a tighter quantum (e.g. `Decimal('0.0001')`) for
+    intermediate tax calculations, then round once at the
+    end — accumulating per-line `0.01` rounding errors
+    over a 50-line order can easily reach `$0.25`.
+    """
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    return value.quantize(quantum, rounding=ROUND_HALF_EVEN)
+
+
+def parse_price_string(raw: str) -> Decimal:
+    ...  # [DRIP-elided: original L211-L235, 25 lines | drip refresh to expand]
+def format_invoice(invoice: Invoice, locale: str = DEFAULT_LOCALE) -> str:
+    ...  # [DRIP-elided: original L237-L264, 28 lines | drip refresh to expand]
+def batch_calculate(
+    engine: "PricingEngine",
+    orders: Iterable[Order],
+    *,
+    fail_fast: bool = False,
+) -> List[Tuple[Order, Optional[Invoice], Optional[Exception]]]:
+    ...  # [DRIP-elided: original L271-L291, 21 lines | drip refresh to expand]
+# ---------------------------------------------------------------------------
+# PricingEngine — main computation surface
+# ---------------------------------------------------------------------------
+
+
+class PricingEngine:
+    """Compute invoices from `Order` instances.
+
+    The engine is stateless except for an internal LRU
+    cache keyed on the order fingerprint. Construct one
+    per service process and reuse it; do not allocate per
+    request.
+    """
+
+    def __init__(
+        self,
+        catalog: Mapping[str, Mapping[str, Any]],
+        tax_table: Mapping[str, Decimal],
+        discount_registry: Mapping[str, Mapping[str, Any]],
+        *,
+        currency: str = DEFAULT_CURRENCY,
+        cache_ttl_seconds: int = CACHE_DEFAULT_TTL_SECONDS,
+        shipping_tiers: Optional[Mapping[str, Decimal]] = None,
+    ) -> None:
+        ...  # [DRIP-elided: original L316-L332, 17 lines | drip refresh to expand]
+    def calculate(self, order: Order) -> Invoice:
+        ...  # [DRIP-elided: original L334-L372, 39 lines | drip refresh to expand]
+    def apply_discount(
+        self,
+        subtotal: Decimal,
+        code: str,
+        order: Order,
+    ) -> Tuple[Decimal, str]:
+        ...  # [DRIP-elided: original L379-L403, 25 lines | drip refresh to expand]
+    def validate(self, order: Order) -> None:
+        ...  # [DRIP-elided: original L405-L431, 27 lines | drip refresh to expand]
+    def format(self, invoice: Invoice, locale: str = DEFAULT_LOCALE) -> str:
+        """Convenience proxy to the standalone `format_invoice` helper."""
+        return format_invoice(invoice, locale)
+
+    def cache_result(self, order: Order, invoice: Invoice) -> None:
+        ...  # [DRIP-elided: original L437-L487, 51 lines | drip refresh to expand]
+    def invalidate_cache(self, order_id: Optional[str] = None) -> int:
+        ...  # [DRIP-elided: original L489-L505, 17 lines | drip refresh to expand]
+    def export_to_dict(self, invoice: Invoice) -> Dict[str, Any]:
+        ...  # [DRIP-elided: original L507-L537, 31 lines | drip refresh to expand]
+    # ----- internal helpers ------------------------------------------------
+
+    def _price_lines(self, order: Order, trace: List[str]) -> List[InvoiceLine]:
+        ...  # [DRIP-elided: original L541-L571, 31 lines | drip refresh to expand]
+    def _apply_discounts(
+        self,
+        order: Order,
+        subtotal: Decimal,
+        trace: List[str],
+    ) -> Tuple[Decimal, List[str]]:
+        ...  # [DRIP-elided: original L578-L607, 30 lines | drip refresh to expand]
+    def _shipping_for(self, order: Order) -> Decimal:
+        """Look up the configured shipping tier price."""
+        return Decimal(str(self._shipping_tiers[order.shipping]))
+
+    def _fingerprint(self, order: Order) -> str:
+        ...  # [DRIP-elided: original L613-L636, 24 lines | drip refresh to expand]
+    def _cache_get(self, key: str) -> Optional[Invoice]:
+        """Return a cached invoice if present and unexpired."""
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        cached_at, invoice = entry
+        if time.time() - cached_at > self._cache_ttl:
+            self._cache.pop(key, None)
+            return None
+        return invoice
+
+    def _cache_put(self, key: str, invoice: Invoice) -> None:
+        ...  # [DRIP-elided: original L649-L693, 45 lines | drip refresh to expand]
+# ---------------------------------------------------------------------------
+# Minimal smoke-test entry point
+# ---------------------------------------------------------------------------
+
+
+def _demo() -> None:
+    ...  # [DRIP-elided: original L700-L729, 30 lines | drip refresh to expand]
+if __name__ == "__main__":
+    _demo()

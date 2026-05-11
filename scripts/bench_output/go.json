@@ -1,0 +1,153 @@
+{
+  "language": "go",
+  "fixture": "http_handler.go",
+  "lines": 569,
+  "bytes": 20595,
+  "first_read_rendered_bytes": 11611,
+  "workflows": {
+    "explore": {
+      "scope": "session",
+      "session_id": "bench-go-explore-75430-852",
+      "started_at": 1778519771,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 2,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 10298,
+      "tokens_sent": 2929,
+      "tokens_saved": 7369,
+      "reduction_pct": 72,
+      "dollars_saved": 0.022106999999999998,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 2.9476,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.MTMd9KT8QB/http_handler.go",
+          "reads": 2,
+          "tokens_full": 10298,
+          "tokens_sent": 2929,
+          "tokens_saved": 7369,
+          "reduction_pct": 72
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "debug": {
+      "scope": "session",
+      "session_id": "bench-go-debug-75430-852",
+      "started_at": 1778519771,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 5,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 25745,
+      "tokens_sent": 3051,
+      "tokens_saved": 22694,
+      "reduction_pct": 88,
+      "dollars_saved": 0.068082,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 9.0776,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.MTMd9KT8QB/http_handler.go",
+          "reads": 5,
+          "tokens_full": 25745,
+          "tokens_sent": 3051,
+          "tokens_saved": 22694,
+          "reduction_pct": 88
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "edit": {
+      "scope": "session",
+      "session_id": "bench-go-edit-75430-852",
+      "started_at": 1778519771,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 4,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 20768,
+      "tokens_sent": 3329,
+      "tokens_saved": 17439,
+      "reduction_pct": 84,
+      "dollars_saved": 0.052317,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 6.9756,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.MTMd9KT8QB/http_handler.go",
+          "reads": 4,
+          "tokens_full": 20768,
+          "tokens_sent": 3329,
+          "tokens_saved": 17439,
+          "reduction_pct": 84
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "multi_edit": {
+      "scope": "session",
+      "session_id": "bench-go-multiedit-75430-852",
+      "started_at": 1778519771,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 7,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 36387,
+      "tokens_sent": 18633,
+      "tokens_saved": 17754,
+      "reduction_pct": 49,
+      "dollars_saved": 0.053262,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 7.101600000000001,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.MTMd9KT8QB/http_handler.go",
+          "reads": 7,
+          "tokens_full": 36387,
+          "tokens_sent": 18633,
+          "tokens_saved": 17754,
+          "reduction_pct": 49
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    }
+  },
+  "latency_ms": {
+    "first_read": {
+      "p50": 5.91,
+      "p95": 6.49,
+      "p99": 8.16
+    },
+    "unchanged": {
+      "p50": 5.53,
+      "p95": 6.27,
+      "p99": 7.11
+    },
+    "delta": {
+      "p50": 6.09,
+      "p95": 6.69,
+      "p99": 7.06
+    },
+    "samples_per_outcome": 45,
+    "raw_samples": 50,
+    "warmup_dropped": 5
+  }
+}

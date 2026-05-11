@@ -1,0 +1,275 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.1.0). Leave blank to dry-run."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux uses musl-static so the binary works on every
+          # distro — Homebrew's Linux brew formula needs that.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross (Linux ARM)
+        if: matrix.cross == true
+        run: cargo install cross --locked
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: cross build --release --target ${{ matrix.target }} --locked
+
+      - name: Build (cargo)
+        if: matrix.cross != true
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="drip${{ matrix.ext }}"
+          STAGE="drip-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "target/${{ matrix.target }}/release/$BIN" "$STAGE/"
+          cp README.md LICENSE "$STAGE/" 2>/dev/null || true
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "drip-${{ matrix.target }}.zip" "$STAGE" >/dev/null
+          else
+            tar -czf "drip-${{ matrix.target }}.tar.gz" "$STAGE"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drip-${{ matrix.target }}
+          path: drip-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.tag != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lah dist
+
+      - name: Compute checksums
+        working-directory: dist
+        run: |
+          shasum -a 256 drip-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/drip-*
+            dist/SHA256SUMS
+
+  # Publishes `drip-cli` (binary `drip`) to crates.io on every
+  # `vX.Y.Z` tag push. Same skip-on-missing-token pattern as the
+  # Homebrew job so forks without a token still get a green run.
+  # Idempotent in practice: `cargo publish` refuses to upload a
+  # version that already exists, so a re-run of the workflow on
+  # the same tag is a no-op.
+  publish-crates:
+    name: publish to crates.io
+    needs: publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe CARGO_REGISTRY_TOKEN
+        id: probe
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "has-token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish."
+          else
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.probe.outputs.has-token == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        if: steps.probe.outputs.has-token == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo publish
+        if: steps.probe.outputs.has-token == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+  # Auto-bumps the Homebrew formula in drip-cli/homebrew-drip after
+  # every published release. Pulls the freshly-published assets,
+  # SHA256s them, rewrites Formula/drip.rb with the new version + the
+  # 4 hashes, and pushes. Skipped on workflow_dispatch dry-runs (no
+  # tag), and skipped if HOMEBREW_TAP_TOKEN isn't set so the workflow
+  # remains usable on forks without secrets.
+  update-homebrew:
+    name: bump Homebrew formula
+    needs: publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      # Probe the secret once and expose `has-token` as a step output;
+      # every subsequent step gates on it via `if:`. An earlier
+      # revision used `exit 0` inside this step, which only exits the
+      # step — the rest of the job still ran and crashed on the
+      # checkout when the token was missing on forks.
+      - name: Probe HOMEBREW_TAP_TOKEN
+        id: probe
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "has-token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOMEBREW_TAP_TOKEN not set — skipping tap update."
+          else
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout homebrew tap
+        if: steps.probe.outputs.has-token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: drip-cli/homebrew-drip
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-drip
+
+      - name: Compute SHA256 for each release asset
+        id: sha
+        if: steps.probe.outputs.has-token == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE="https://github.com/drip-cli/drip/releases/download/${GITHUB_REF_NAME}"
+          fetch_sha() {
+            curl -fsSL "${BASE}/$1" | sha256sum | cut -d' ' -f1
+          }
+          {
+            echo "VERSION=${VERSION}"
+            echo "SHA_MACOS_ARM=$(fetch_sha drip-aarch64-apple-darwin.tar.gz)"
+            echo "SHA_MACOS_X86=$(fetch_sha drip-x86_64-apple-darwin.tar.gz)"
+            echo "SHA_LINUX_ARM=$(fetch_sha drip-aarch64-unknown-linux-musl.tar.gz)"
+            echo "SHA_LINUX_X86=$(fetch_sha drip-x86_64-unknown-linux-musl.tar.gz)"
+          } >> "$GITHUB_ENV"
+
+      - name: Render formula
+        if: steps.probe.outputs.has-token == 'true'
+        run: |
+          cat > homebrew-drip/Formula/drip.rb <<FORMULA
+          class Drip < Formula
+            desc "Delta Read Interception Proxy — sends only file diffs to your LLM agent"
+            homepage "https://github.com/drip-cli/drip"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/drip-cli/drip/releases/download/v${VERSION}/drip-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_MACOS_ARM}"
+              end
+              on_intel do
+                url "https://github.com/drip-cli/drip/releases/download/v${VERSION}/drip-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_MACOS_X86}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/drip-cli/drip/releases/download/v${VERSION}/drip-aarch64-unknown-linux-musl.tar.gz"
+                sha256 "${SHA_LINUX_ARM}"
+              end
+              on_intel do
+                url "https://github.com/drip-cli/drip/releases/download/v${VERSION}/drip-x86_64-unknown-linux-musl.tar.gz"
+                sha256 "${SHA_LINUX_X86}"
+              end
+            end
+
+            def install
+              bin.install "drip"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/drip --version")
+            end
+          end
+          FORMULA
+
+      - name: Commit and push
+        if: steps.probe.outputs.has-token == 'true'
+        run: |
+          cd homebrew-drip
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/drip.rb
+          git diff --staged --quiet && exit 0
+          git commit -m "drip ${VERSION}"
+          git push

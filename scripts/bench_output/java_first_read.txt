@@ -1,0 +1,474 @@
+[DRIP: full read (semantic-compressed) | 38% reduction (4666/7527 tokens) | 8 functions elided, 292 lines hidden | ↔ unchanged since last session (0s ago) | ℹ session expired — fresh baseline started | run `drip refresh` for full content | /var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.rDqvGkHMsT/UserRepository.java]
+package com.example.users.repository;
+
+import javax.persistence.EntityManager;
+import javax.persistence.PersistenceContext;
+import javax.persistence.TypedQuery;
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+import javax.persistence.LockModeType;
+import javax.persistence.NoResultException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.Collections;
+import java.util.Locale;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
+
+import java.io.Serializable;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Primary persistence gateway for {@link User} aggregates.
+ * <p>Wraps JPA {@link EntityManager} access with a thin layer of caching,
+ * [DRIP-javadoc-elided: original L62-L69, 7 lines | drip refresh for full]
+ */
+@Repository
+public class UserRepository {
+
+    private static final String CACHE_REGION = "users";
+    private static final String CACHE_REGION_BY_EMAIL = "users-by-email";
+    private static final int DEFAULT_PAGE_SIZE = 25;
+    private static final int MAX_PAGE_SIZE = 200;
+    private static final int BULK_FLUSH_THRESHOLD = 50;
+    private static final Duration ACTIVE_WINDOW = Duration.ofDays(30);
+
+    private final EntityManager entityManager;
+    private final JdbcTemplate jdbcTemplate;
+    private final ApplicationEventPublisher eventPublisher;
+    private final AtomicLong writeCounter = new AtomicLong();
+
+    @Value("${users.repository.audit-enabled:true}")
+    private boolean auditEnabled;
+    private static final Logger log = LoggerFactory.getLogger(UserRepository.class);
+
+    @Autowired
+    public UserRepository(@PersistenceContext EntityManager entityManager,
+                          JdbcTemplate jdbcTemplate,
+                          ApplicationEventPublisher eventPublisher) {
+        Assert.notNull(entityManager, "entityManager must not be null");
+        Assert.notNull(jdbcTemplate, "jdbcTemplate must not be null");
+        Assert.notNull(eventPublisher, "eventPublisher must not be null");
+        this.entityManager = entityManager;
+        this.jdbcTemplate = jdbcTemplate;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /**
+     * Loads a single user by primary key.
+     * <p>Hits the second-level cache when warm; otherwise issues a single
+     * @param id non-null user identifier
+     * @return the user, or {@link Optional#empty()} when not found
+     * @throws IllegalArgumentException if {@code id} is null
+     * [DRIP-javadoc-elided: original L104-L108, 4 lines | drip refresh for full]
+     */
+    @Cacheable(cacheNames = CACHE_REGION, key = "#id", unless = "#result == null || !#result.isPresent()")
+    @Transactional(readOnly = true, propagation = Propagation.SUPPORTS)
+    public Optional<User> findById(UUID id) {
+        /* [DRIP-elided: original L116-L147, 32 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Returns all non-deleted users in deterministic order.
+     * <p>Intended for small tenants and admin tooling; for larger result
+     * @return a mutable list of users sorted by creation timestamp
+     * [DRIP-javadoc-elided: original L152-L156, 4 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public List<User> findAll() {
+        /* [DRIP-elided: original L161-L179, 19 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Looks up a user by their case-insensitive email address.
+     * <p>Email is normalised to lower-case before the lookup so that
+     * @param email candidate email address; blank values yield empty
+     * @return matching user wrapped in {@link Optional}
+     * [DRIP-javadoc-elided: original L184-L188, 4 lines | drip refresh for full]
+     */
+    @Cacheable(cacheNames = CACHE_REGION_BY_EMAIL, key = "#email?.toLowerCase()",
+               unless = "#result == null || !#result.isPresent()")
+    @Transactional(readOnly = true)
+    public Optional<User> findByEmail(String email) {
+        if (!StringUtils.hasText(email)) {
+            return Optional.empty();
+        }
+        String normalised = email.trim().toLowerCase(Locale.ROOT);
+        TypedQuery<User> query = entityManager.createQuery(
+                "SELECT u FROM User u WHERE LOWER(u.email) = :email AND u.deleted = false",
+                User.class);
+        query.setParameter("email", normalised);
+        query.setMaxResults(1);
+        try {
+            return Optional.of(query.getSingleResult());
+        } catch (NoResultException ex) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Returns every active user holding the given role.
+     * <p>Roles are matched case-sensitively and the result preserves the
+     * @param role role identifier; must not be blank
+     * @return non-null, possibly empty list of matching users
+     * [DRIP-javadoc-elided: original L214-L218, 4 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public List<User> findByRole(String role) {
+        /* [DRIP-elided: original L224-L241, 18 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Persists a newly constructed user aggregate.
+     * <p>Assigns a UUID if absent, stamps {@code createdAt} and forwards
+     * @param user transient instance to persist
+     * @return the managed instance with generated identifiers
+     * @throws DuplicateEmailException when the email is already taken
+     * [DRIP-javadoc-elided: original L246-L251, 5 lines | drip refresh for full]
+     */
+    @CacheEvict(cacheNames = {CACHE_REGION, CACHE_REGION_BY_EMAIL}, allEntries = true)
+    @Transactional(propagation = Propagation.REQUIRED, isolation = Isolation.READ_COMMITTED)
+    public User save(User user) {
+        /* [DRIP-elided: original L259-L297, 39 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Applies a partial update to a managed user.
+     * <p>Only non-null fields on {@code patch} are copied across. The
+     * @param id identifier of the user to mutate
+     * @param patch partial user holding the fields to overwrite
+     * @return the merged, managed user
+     * @throws UserNotFoundException when no user matches {@code id}
+     * [DRIP-javadoc-elided: original L302-L306, 4 lines | drip refresh for full]
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CACHE_REGION, key = "#id"),
+            @CacheEvict(cacheNames = CACHE_REGION_BY_EMAIL, allEntries = true)
+    })
+    @Transactional
+    public User update(UUID id, User patch) {
+        /* [DRIP-elided: original L318-L363, 46 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Soft-deletes the given user.
+     * <p>The row is retained for audit purposes but the {@code deleted}
+     * @param id user identifier; must reference an existing row
+     * @throws UserNotFoundException when the id does not resolve
+     * [DRIP-javadoc-elided: original L368-L373, 5 lines | drip refresh for full]
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CACHE_REGION, key = "#id"),
+            @CacheEvict(cacheNames = CACHE_REGION_BY_EMAIL, allEntries = true)
+    })
+    @Transactional
+    public void delete(UUID id) {
+        Assert.notNull(id, "id must not be null");
+        User managed = entityManager.find(User.class, id);
+        if (managed == null) {
+            throw new UserNotFoundException(id);
+        }
+        if (managed.isDeleted()) {
+            return;
+        }
+        managed.setDeleted(true);
+        managed.setDeletedAt(Instant.now());
+        managed.setUpdatedAt(Instant.now());
+        auditChange("DELETE", managed);
+    }
+
+    /**
+     * Returns a single page of users matching the implicit "active" filter.
+     * <p>The total count is computed via a separate aggregate query so the
+     * @param pageable Spring page descriptor; null falls back to defaults
+     * @return non-null page; may be empty when no users match
+     * [DRIP-javadoc-elided: original L399-L403, 4 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public Page<User> paginate(Pageable pageable) {
+        /* [DRIP-elided: original L409-L426, 18 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Counts non-deleted users.
+     * <p>Uses an indexed aggregate so the cost is roughly constant for the
+     * @return number of active rows
+     * [DRIP-javadoc-elided: original L431-L435, 4 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public long count() {
+        TypedQuery<Long> query = entityManager.createQuery(
+                "SELECT COUNT(u) FROM User u WHERE u.deleted = false", Long.class);
+        return query.getSingleResult();
+    }
+
+    /**
+     * Cheap presence check that avoids materialising the entity.
+     * <p>Issues a {@code SELECT 1} which is friendlier to the query planner
+     * @param id candidate identifier
+     * @return true when an active row exists
+     * [DRIP-javadoc-elided: original L447-L450, 3 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public boolean existsById(UUID id) {
+        if (id == null) {
+            return false;
+        }
+        TypedQuery<Long> query = entityManager.createQuery(
+                "SELECT COUNT(u) FROM User u WHERE u.id = :id AND u.deleted = false", Long.class);
+        query.setParameter("id", id);
+        return query.getSingleResult() > 0L;
+    }
+
+    /**
+     * Persists many users in a single transaction with periodic flushes.
+     * <p>Flushes and clears the persistence context every
+     * @param users non-null collection; may be empty
+     * @return the number of rows that were persisted
+     * [DRIP-javadoc-elided: original L467-L471, 4 lines | drip refresh for full]
+     */
+    @CacheEvict(cacheNames = {CACHE_REGION, CACHE_REGION_BY_EMAIL}, allEntries = true)
+    @Transactional
+    public int bulkSave(Collection<User> users) {
+        /* [DRIP-elided: original L478-L525, 48 lines | drip refresh to expand] */
+    }
+
+    /**
+     * Streams users active within the last {@link #ACTIVE_WINDOW}.
+     * <p>Returns a {@link Stream} so the caller can fold over the result
+     * @return non-null stream; never throws on empty result
+     * [DRIP-javadoc-elided: original L530-L534, 4 lines | drip refresh for full]
+     */
+    @Transactional(readOnly = true)
+    public Stream<User> findActive() {
+        /* [DRIP-elided: original L539-L554, 16 lines | drip refresh to expand] */
+    }
+
+    private Specification<User> buildSpecification(boolean activeOnly, String roleFilter) {
+        return (root, cq, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (activeOnly) {
+                predicates.add(cb.isFalse(root.get("deleted")));
+                predicates.add(cb.isFalse(root.get("disabled")));
+            }
+            if (StringUtils.hasText(roleFilter)) {
+                predicates.add(cb.isMember(roleFilter, root.get("roles")));
+            }
+            if (predicates.isEmpty()) {
+                return cb.conjunction();
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    private void evictCache(UUID id) {
+        if (id == null) {
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", id);
+        payload.put("region", CACHE_REGION);
+        payload.put("byEmailRegion", CACHE_REGION_BY_EMAIL);
+        payload.put("at", Instant.now());
+        payload.put("writeOrdinal", writeCounter.incrementAndGet());
+        try {
+            eventPublisher.publishEvent(new UserCacheEvictedEvent(payload));
+        } catch (RuntimeException e) {
+            log.warn("cache-evict event publication failed for {}", id, e);
+        }
+    }
+
+    private void auditChange(String action, User user) {
+        if (!auditEnabled || user == null) {
+            return;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("action", action);
+        row.put("user_id", user.getId());
+        row.put("at", LocalDateTime.now(ZoneOffset.UTC));
+        eventPublisher.publishEvent(new UserAuditEvent(row));
+    }
+
+    /**
+     * Specification builder that composes predicates without leaking the
+     * criteria API into service code.
+     */
+    public static final class UserSpecification {
+        private boolean activeOnly = true;
+        private String role;
+        private Instant createdAfter;
+
+        public UserSpecification activeOnly(boolean v) {
+            this.activeOnly = v;
+            return this;
+        }
+
+        public UserSpecification withRole(String role) {
+            this.role = role;
+            return this;
+        }
+
+        public UserSpecification createdAfter(Instant when) {
+            this.createdAfter = when;
+            return this;
+        }
+
+        public Specification<User> build() {
+            return (root, cq, cb) -> {
+                List<Predicate> predicates = new ArrayList<>();
+                if (activeOnly) {
+                    predicates.add(cb.isFalse(root.get("deleted")));
+                }
+                if (StringUtils.hasText(role)) {
+                    predicates.add(cb.isMember(role, root.get("roles")));
+                }
+                if (createdAfter != null) {
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), createdAfter));
+                }
+                return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
+            };
+        }
+    }
+
+    /**
+     * Lightweight wrapper around Spring's {@link Page} that exposes a few
+     * convenience accessors used by the REST layer.
+     */
+    public static final class UserPage<T> {
+        private final Page<T> delegate;
+
+        public UserPage(Page<T> delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate");
+        }
+
+        public List<T> content() {
+            return delegate.getContent();
+        }
+
+        public int number() {
+            return delegate.getNumber();
+        }
+
+        public int size() {
+            return delegate.getSize();
+        }
+
+        public long total() {
+            return delegate.getTotalElements();
+        }
+
+        public boolean hasNext() {
+            return delegate.hasNext();
+        }
+    }
+
+    static final class UserCacheEvictedEvent {
+        private final Map<String, Object> payload;
+        UserCacheEvictedEvent(Map<String, Object> payload) { this.payload = payload; }
+        public Map<String, Object> getPayload() { return payload; }
+    }
+
+    static final class UserAuditEvent {
+        private final Map<String, Object> row;
+        UserAuditEvent(Map<String, Object> row) { this.row = row; }
+        public Map<String, Object> getRow() { return row; }
+    }
+}
+
+class User {
+    private UUID id;
+    private String email;
+    private String displayName;
+    private Set<String> roles = new HashSet<>();
+    private boolean deleted;
+    private boolean disabled;
+    private Instant createdAt;
+    private Instant updatedAt;
+    private Instant deletedAt;
+    private Instant lastLoginAt;
+
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public String getDisplayName() { return displayName; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public Set<String> getRoles() { return roles; }
+    public void setRoles(Set<String> roles) { this.roles = roles; }
+    public boolean isDeleted() { return deleted; }
+    public void setDeleted(boolean deleted) { this.deleted = deleted; }
+    public boolean isDisabled() { return disabled; }
+    public void setDisabled(boolean disabled) { this.disabled = disabled; }
+    public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
+    public Instant getLastLoginAt() { return lastLoginAt; }
+    public void setLastLoginAt(Instant lastLoginAt) { this.lastLoginAt = lastLoginAt; }
+}
+
+class UserNotFoundException extends RuntimeException implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    public UserNotFoundException(UUID id) {
+        super("User not found: " + id);
+    }
+
+    public UserNotFoundException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+
+class DuplicateEmailException extends RuntimeException implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    public DuplicateEmailException(String email) {
+        super("Email already registered: " + email);
+    }
+
+    public DuplicateEmailException(String email, Throwable cause) {
+        super("Email already registered: " + email, cause);
+    }
+}

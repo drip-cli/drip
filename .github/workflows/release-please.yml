@@ -1,0 +1,26 @@
+name: release-please
+
+# Runs on every push to main. release-please reads Conventional
+# Commit messages since the last release tag, opens (or updates) a
+# release PR that bumps `Cargo.toml` + `CHANGELOG.md`, and — when
+# you merge that PR — creates the matching `vX.Y.Z` tag. The
+# `release.yml` workflow picks up the tag and builds binaries.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # Config + manifest are committed under .github/ so the
+          # action picks them up; the manifest tracks the current
+          # version and updates atomically with the release PR.
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json

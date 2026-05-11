@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[husky] cargo test --locked"
+cargo test --locked

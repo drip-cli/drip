@@ -1,0 +1,153 @@
+{
+  "language": "python",
+  "fixture": "pricing_engine.py",
+  "lines": 731,
+  "bytes": 27096,
+  "first_read_rendered_bytes": 10629,
+  "workflows": {
+    "explore": {
+      "scope": "session",
+      "session_id": "bench-python-explore-75430-11151",
+      "started_at": 1778519754,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 2,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 13548,
+      "tokens_sent": 2684,
+      "tokens_saved": 10864,
+      "reduction_pct": 80,
+      "dollars_saved": 0.032592,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 4.3456,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.QSswMaxNNZ/pricing_engine.py",
+          "reads": 2,
+          "tokens_full": 13548,
+          "tokens_sent": 2684,
+          "tokens_saved": 10864,
+          "reduction_pct": 80
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "debug": {
+      "scope": "session",
+      "session_id": "bench-python-debug-75430-11151",
+      "started_at": 1778519754,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 5,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 33870,
+      "tokens_sent": 2806,
+      "tokens_saved": 31064,
+      "reduction_pct": 92,
+      "dollars_saved": 0.093192,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 12.425600000000001,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.QSswMaxNNZ/pricing_engine.py",
+          "reads": 5,
+          "tokens_full": 33870,
+          "tokens_sent": 2806,
+          "tokens_saved": 31064,
+          "reduction_pct": 92
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "edit": {
+      "scope": "session",
+      "session_id": "bench-python-edit-75430-11151",
+      "started_at": 1778519754,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 4,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 27500,
+      "tokens_sent": 2938,
+      "tokens_saved": 24562,
+      "reduction_pct": 89,
+      "dollars_saved": 0.073686,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 9.824800000000002,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.QSswMaxNNZ/pricing_engine.py",
+          "reads": 4,
+          "tokens_full": 27500,
+          "tokens_sent": 2938,
+          "tokens_saved": 24562,
+          "reduction_pct": 89
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    },
+    "multi_edit": {
+      "scope": "session",
+      "session_id": "bench-python-multiedit-75430-11151",
+      "started_at": 1778519754,
+      "elapsed_secs": 0,
+      "files_tracked": 1,
+      "total_reads": 7,
+      "files_edited": 0,
+      "total_edits": 0,
+      "tokens_full": 48226,
+      "tokens_sent": 23495,
+      "tokens_saved": 24731,
+      "reduction_pct": 51,
+      "dollars_saved": 0.074193,
+      "price_per_mtok": 3.0,
+      "co2_g_saved": 9.892400000000002,
+      "co2_g_per_ktok": 0.4,
+      "top": [
+        {
+          "file": "/private/var/folders/34/x_9hl20s6rjgdt4srsc65d_c0000gn/T/tmp.QSswMaxNNZ/pricing_engine.py",
+          "reads": 7,
+          "tokens_full": 48226,
+          "tokens_sent": 23495,
+          "tokens_saved": 24731,
+          "reduction_pct": 51
+        }
+      ],
+      "history": null,
+      "session_strategy": "env",
+      "session_context": "(env)"
+    }
+  },
+  "latency_ms": {
+    "first_read": {
+      "p50": 5.37,
+      "p95": 6.72,
+      "p99": 7.25
+    },
+    "unchanged": {
+      "p50": 5.08,
+      "p95": 5.84,
+      "p99": 6.27
+    },
+    "delta": {
+      "p50": 5.41,
+      "p95": 5.96,
+      "p99": 9.75
+    },
+    "samples_per_outcome": 45,
+    "raw_samples": 50,
+    "warmup_dropped": 5
+  }
+}

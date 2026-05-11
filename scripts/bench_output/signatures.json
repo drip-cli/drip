@@ -1,0 +1,130 @@
+[
+    {
+        "language": "python",
+        "ok": true,
+        "signatures": {
+            "original": 20,
+            "rendered": 20
+        },
+        "type_decls": {
+            "original": 10,
+            "rendered": 10
+        },
+        "imports": {
+            "original": 9,
+            "rendered": 9
+        }
+    },
+    {
+        "language": "rust",
+        "ok": true,
+        "signatures": {
+            "original": 19,
+            "rendered": 19
+        },
+        "type_decls": {
+            "original": 8,
+            "rendered": 8
+        },
+        "imports": {
+            "original": 12,
+            "rendered": 12
+        }
+    },
+    {
+        "language": "typescript",
+        "ok": true,
+        "signatures": {
+            "original": 18,
+            "rendered": 18
+        },
+        "type_decls": {
+            "original": 10,
+            "rendered": 10
+        },
+        "imports": {
+            "original": 4,
+            "rendered": 4
+        }
+    },
+    {
+        "language": "java",
+        "ok": true,
+        "signatures": {
+            "original": 52,
+            "rendered": 52
+        },
+        "type_decls": {
+            "original": 4,
+            "rendered": 4
+        },
+        "imports": {
+            "original": 54,
+            "rendered": 54
+        }
+    },
+    {
+        "language": "go",
+        "ok": true,
+        "signatures": {
+            "original": 16,
+            "rendered": 16
+        },
+        "type_decls": {
+            "original": 9,
+            "rendered": 9
+        },
+        "imports": {
+            "original": 1,
+            "rendered": 1
+        }
+    },
+    {
+        "language": "cpp",
+        "ok": true,
+        "signatures": {
+            "original": 36,
+            "rendered": 36
+        },
+        "type_decls": {
+            "original": 8,
+            "rendered": 8
+        },
+        "imports": {
+            "original": 14,
+            "rendered": 14
+        }
+    },
+    {
+        "language": "csharp",
+        "ok": true,
+        "signatures": {
+            "original": 12,
+            "rendered": 12
+        },
+        "type_decls": {
+            "original": 14,
+            "rendered": 14
+        },
+        "imports": {
+            "original": 8,
+            "rendered": 8
+        }
+    },
+    {
+        "language": "kotlin",
+        "ok": true,
+        "signatures": {
+            "original": 37,
+            "rendered": 37
+        },
+        "type_decls": {
+            "original": 11,
+            "rendered": 11
+        },
+        "imports": {
+            "original": 13,
+            "rendered": 13
+        }
+    }
+]

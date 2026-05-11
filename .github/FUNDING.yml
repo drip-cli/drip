@@ -1,0 +1,11 @@
+# Configure GitHub Sponsors and other funding platforms here.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# Replace the placeholders with your handles to enable the "Sponsor" button.
+
+github: []          # e.g. [PLACEHOLDER]
+patreon:            # e.g. PLACEHOLDER
+open_collective:    # e.g. drip
+ko_fi:              # e.g. PLACEHOLDER
+tidelift:           # e.g. cargo/drip
+custom: []          # e.g. ["https://example.com/donate"]

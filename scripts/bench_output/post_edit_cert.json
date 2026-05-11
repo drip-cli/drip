@@ -1,0 +1,66 @@
+{
+  "scenario": "post-edit verification re-read: agent edits, then immediately reads the file",
+  "languages": [
+    {
+      "language": "python",
+      "fixture": "pricing_engine.py",
+      "without_drip_bytes": 27122,
+      "with_cert_bytes": 389,
+      "reduction_pct": 99
+    },
+    {
+      "language": "rust",
+      "fixture": "session_manager.rs",
+      "without_drip_bytes": 22941,
+      "with_cert_bytes": 391,
+      "reduction_pct": 98
+    },
+    {
+      "language": "typescript",
+      "fixture": "api_client.ts",
+      "without_drip_bytes": 26135,
+      "with_cert_bytes": 381,
+      "reduction_pct": 99
+    },
+    {
+      "language": "java",
+      "fixture": "UserRepository.java",
+      "without_drip_bytes": 30132,
+      "with_cert_bytes": 393,
+      "reduction_pct": 99
+    },
+    {
+      "language": "go",
+      "fixture": "http_handler.go",
+      "without_drip_bytes": 20621,
+      "with_cert_bytes": 385,
+      "reduction_pct": 98
+    },
+    {
+      "language": "cpp",
+      "fixture": "json_parser.cpp",
+      "without_drip_bytes": 24010,
+      "with_cert_bytes": 385,
+      "reduction_pct": 98
+    },
+    {
+      "language": "csharp",
+      "fixture": "OrderService.cs",
+      "without_drip_bytes": 27754,
+      "with_cert_bytes": 385,
+      "reduction_pct": 99
+    },
+    {
+      "language": "kotlin",
+      "fixture": "DataRepository.kt",
+      "without_drip_bytes": 30286,
+      "with_cert_bytes": 389,
+      "reduction_pct": 99
+    }
+  ],
+  "aggregate": {
+    "without_drip_bytes": 209001,
+    "with_cert_bytes": 3098,
+    "reduction_pct": 99
+  }
+}
