@@ -242,8 +242,7 @@ SQLite, why `similar`, edge cases) see
 
 ```bash
 # Homebrew (recommended) — Apple Silicon + Intel
-brew tap drip-cli/drip
-brew install drip
+brew install drip-cli/drip/drip
 
 # Or via the install script
 curl -fsSL https://raw.githubusercontent.com/drip-cli/drip/main/install.sh | sh
@@ -258,8 +257,7 @@ curl -fsSL https://raw.githubusercontent.com/drip-cli/drip/main/install.sh | sh
 curl -fsSL https://raw.githubusercontent.com/drip-cli/drip/main/install.sh | sh
 
 # Or via Homebrew (linuxbrew)
-brew tap drip-cli/drip
-brew install drip
+brew install drip-cli/drip/drip
 ```
 
 If `~/.local/bin` is not on your `PATH`, the script prints the
