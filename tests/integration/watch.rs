@@ -199,9 +199,10 @@ fn watcher_refuses_fifo_at_watched_path() {
     fs::remove_file(&flip).unwrap();
     let cstr = std::ffi::CString::new(flip.as_os_str().as_bytes()).unwrap();
     let rc = unsafe { libc::mkfifo(cstr.as_ptr(), 0o600) };
-    assert_eq!(rc, 0, "mkfifo failed: errno {}", unsafe {
-        *libc::__error()
-    });
+    // Portable errno access — `libc::__error()` is macOS-only, Linux
+    // uses `__errno_location`. `std::io::Error::last_os_error()`
+    // works on every Unix without the cfg dance.
+    assert_eq!(rc, 0, "mkfifo failed: {}", std::io::Error::last_os_error());
     sleep(Duration::from_millis(600));
 
     // Touch the canary AFTER the FIFO exists. If the watcher's
