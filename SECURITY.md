@@ -23,7 +23,7 @@ privately through one of the following channels:
   open [a security advisory](https://github.com/drip-cli/drip/security/advisories/new)
   on the repository. GitHub keeps the report confidential until a
   fix is published.
-- **Alternative** — email **contact@performcode.fr** with the
+- **Alternative** — email **contact@drip-ai.app** with the
   subject `[DRIP security]`. PGP not currently required; mark the
   thread as confidential and we'll coordinate from there.
 
