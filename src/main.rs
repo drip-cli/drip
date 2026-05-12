@@ -33,7 +33,7 @@ pub enum Cmd {
         /// Install at the user level (~/.claude/) instead of project-level.
         #[arg(short = 'g', long)]
         global: bool,
-        /// Target agent.
+        /// Target agent: `claude`, `codex`, or `gemini`.
         #[arg(long, default_value = "claude")]
         agent: String,
     },
@@ -44,7 +44,7 @@ pub enum Cmd {
         /// Uninstall from ~/.claude/ instead of the project tree.
         #[arg(short = 'g', long)]
         global: bool,
-        /// Target agent (currently only `claude` is supported).
+        /// Target agent: `claude`, `codex`, or `gemini`.
         #[arg(long, default_value = "claude")]
         agent: String,
     },
