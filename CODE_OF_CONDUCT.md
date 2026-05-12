@@ -11,7 +11,7 @@ The full text is available at the link above.
 
 If you see behaviour that violates the Covenant, open a confidential
 issue on the GitHub repository or email the maintainers at
-**contact@performcode.fr**. Reports are reviewed promptly and handled
+**contact@drip-ai.app**. Reports are reviewed promptly and handled
 discreetly.
 
 ## Scope
