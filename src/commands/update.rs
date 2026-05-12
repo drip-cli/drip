@@ -90,8 +90,11 @@ fn fetch_latest_version() -> Result<String> {
 
 fn http_get(url: &str) -> Result<String> {
     // Try curl first (universal on macOS/Linux/modern Windows). Fall
-    // back to wget for the minority that lacks curl.
-    let curl = Command::new("curl")
+    // back to wget for the minority that lacks curl. When BOTH fail
+    // we surface what we actually saw from each — the previous
+    // single-message error blamed "neither curl nor wget" even when
+    // curl had run and returned a real HTTP/network error.
+    let curl_diag = match Command::new("curl")
         .args([
             "-fsSL",
             "-H",
@@ -102,23 +105,55 @@ fn http_get(url: &str) -> Result<String> {
             "10",
             url,
         ])
-        .output();
-    if let Ok(o) = curl {
-        if o.status.success() {
+        .output()
+    {
+        Ok(o) if o.status.success() => {
             return Ok(String::from_utf8_lossy(&o.stdout).into_owned());
         }
-    }
-    let wget = Command::new("wget")
+        Ok(o) => format!(
+            "curl exited with status {} (stderr: {})",
+            o.status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            short_stderr(&o.stderr),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "curl not found in PATH".to_string(),
+        Err(e) => format!("curl spawn failed: {e}"),
+    };
+
+    match Command::new("wget")
         .args(["-qO-", "--timeout=10", url])
         .output()
-        .context("neither curl nor wget could run — install one and retry")?;
-    if !wget.status.success() {
-        bail!(
-            "wget failed: {}",
-            String::from_utf8_lossy(&wget.stderr).trim()
-        );
+    {
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+        Ok(o) => bail!(
+            "both fetchers failed — {curl_diag}; wget exited with status {} (stderr: {})",
+            o.status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            short_stderr(&o.stderr),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("{curl_diag}, and wget is not installed either — install curl or wget and retry")
+        }
+        Err(e) => bail!("{curl_diag}; wget spawn failed: {e}"),
     }
-    Ok(String::from_utf8_lossy(&wget.stdout).into_owned())
+}
+
+/// Truncate a captured stderr to a single readable line. Keeps error
+/// messages snappy when the underlying tool emits a multi-line dump.
+fn short_stderr(buf: &[u8]) -> String {
+    let s = String::from_utf8_lossy(buf);
+    let line = s.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        "<empty>".to_string()
+    } else if line.len() > 200 {
+        format!("{}…", &line[..200])
+    } else {
+        line.to_string()
+    }
 }
 
 /// Path-based heuristic: Homebrew (`/homebrew/`, `/Cellar/`,
@@ -298,5 +333,57 @@ mod tests {
         let v = fetch_latest_version().unwrap();
         assert_eq!(v, "1.2.3");
         std::env::remove_var("DRIP_UPDATE_FAKE_LATEST");
+    }
+
+    #[test]
+    fn short_stderr_handles_empty_input() {
+        assert_eq!(short_stderr(b""), "<empty>");
+        assert_eq!(short_stderr(b"\n\n"), "<empty>");
+    }
+
+    #[test]
+    fn short_stderr_returns_first_line() {
+        let buf = b"curl: (28) Operation timed out\nadditional debug noise\nmore lines";
+        assert_eq!(short_stderr(buf), "curl: (28) Operation timed out");
+    }
+
+    #[test]
+    fn short_stderr_truncates_overly_long_first_line() {
+        let long = "x".repeat(500);
+        let out = short_stderr(long.as_bytes());
+        assert!(out.ends_with('…'));
+        // The truncated payload sits well under the original length.
+        assert!(out.len() < 250);
+    }
+
+    #[test]
+    fn http_get_surfaces_both_diagnostics_when_neither_tool_is_in_path() {
+        // Drop curl + wget from PATH and call http_get against a
+        // bogus URL. We don't care about the URL since both binaries
+        // should fail to spawn — what we care about is that the
+        // surfaced error names BOTH "curl" and "wget" (the old code
+        // only mentioned the fallback's failure).
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/var/empty");
+
+        let err = http_get("http://127.0.0.1:1/nope").unwrap_err();
+        let msg = format!("{err:#}");
+
+        // Restore PATH before any assertion so a failure doesn't
+        // leak a broken env into sibling tests.
+        match original_path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+
+        assert!(
+            msg.contains("curl") && msg.contains("wget"),
+            "error must mention both fetchers: {msg}"
+        );
+        assert!(
+            msg.contains("not found") || msg.contains("not installed"),
+            "error must say what's missing, not just blame both: {msg}"
+        );
     }
 }
