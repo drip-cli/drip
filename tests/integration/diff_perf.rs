@@ -27,10 +27,17 @@ fn time_read(drip: &Drip, file: &std::path::Path) -> std::time::Duration {
 }
 
 /// In debug builds, "5ms overhead" is unrealistic — debug rusqlite +
-/// debug similar are 5–15× slower than release. We assert a generous
-/// debug bound here; the strict 5ms target is enforced manually via
+/// debug similar are 5–15× slower than release. On top of that, these
+/// tests run on GitHub's shared Ubuntu runners where a 50 KB diff
+/// routinely lands around 300–400 ms cold (noisy neighbour CPU,
+/// no warmup). The strict 5 ms target is enforced manually via
 /// `scripts/bench.sh` against the release binary.
-const DEBUG_BUDGET_MS: u128 = 250;
+///
+/// This budget is intentionally a **regression guard, not a benchmark**:
+/// if a future change makes the diff path accidentally quadratic, it
+/// will blow well past 2 s. The width keeps CI from flaking on
+/// scheduler hiccups without losing that signal.
+const DEBUG_BUDGET_MS: u128 = 2_000;
 
 #[test]
 fn diff_under_budget_50kb() {
