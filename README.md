@@ -6,12 +6,12 @@
 
 **Delta Read Interception Proxy — sends only file diffs to your LLM agent.**
 
-[Website](https://www.drip-ai.app) · [Install](#installation) · [Benchmarks](./BENCHMARKS.md) · [Architecture](./ARCHITECTURE.md)
+[Website](https://drip-ai.app/) · [Install](#installation) · [Benchmarks](./BENCHMARKS.md) · [Architecture](./ARCHITECTURE.md)
 
 [![CI](https://img.shields.io/github/actions/workflow/status/drip-cli/drip/ci.yml?branch=main&label=build&logo=github)](https://github.com/drip-cli/drip/actions)
 [![Crates.io](https://img.shields.io/crates/v/drip-cli.svg?logo=rust)](https://crates.io/crates/drip-cli)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-orange.svg?logo=homebrew)](https://github.com/drip-cli/homebrew-drip)
-[![Website](https://img.shields.io/badge/website-drip--ai.app-18E299.svg?logo=vercel&logoColor=white)](https://www.drip-ai.app)
+[![Website](https://img.shields.io/badge/website-drip--ai.app-18E299.svg?logo=vercel&logoColor=white)](https://drip-ai.app/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
 [![Tests](https://img.shields.io/badge/tests-431%20passing-brightgreen.svg)](./tests)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-8%20langs%2C%204%20workflows-blue.svg)](./BENCHMARKS.md)
@@ -698,7 +698,7 @@ Every PR needs:
 
 ## Team
 
-Built by **[Perform Code SAS](https://www.drip-ai.app/legal/notice)** in
+Built by **[Perform Code SAS](https://drip-ai.app/en/legal/notice)** in
 Lille, France.
 
 |     | Founder          | Focus            | GitHub                                       |
