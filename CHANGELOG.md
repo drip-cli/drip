@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/drip-cli/drip/compare/v0.1.0...v0.1.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* ship cross-platform tests + update/help error handling to main ([#12](https://github.com/drip-cli/drip/issues/12)) ([f0ce966](https://github.com/drip-cli/drip/commit/f0ce96621d403161c780591ccef5691ba111e49a))
+
 ## [Unreleased]
 
 ### Removed
